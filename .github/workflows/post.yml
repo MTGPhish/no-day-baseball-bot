@@ -8,9 +8,11 @@ on:
 jobs:
   post:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v3
+
+      - name: Show tweet_bot.py for debug
+        run: cat tweet_bot.py
 
       - uses: actions/setup-python@v4
         with:
