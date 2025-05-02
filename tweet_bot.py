@@ -35,21 +35,21 @@ def no_day_baseball():
     return True
 
 if no_day_baseball():
-    # Build a unique URL by appending today’s date as a query‑string
+    # Append ?d=YYYYMMDD so Twitter sees a unique URL each day,
+    # but jsDelivr always serves the same image file.
     eastern = pytz.timezone("US/Eastern")
     suffix = datetime.now(eastern).strftime("%Y%m%d")
     url = (
-        "https://raw.githubusercontent.com/"
-        "MTGPhish/no-day-baseball-bot/main/DayBaseball.jpg"
+        "https://cdn.jsdelivr.net/gh/"
+        "MTGPhish/no-day-baseball-bot@main/DayBaseball.jpg"
         f"?d={suffix}"
     )
 
     try:
         client.create_tweet(text=url)
-        print("✅ Posted meme link via v2")
+        print("✅ Posted meme link via v2 (jsDelivr URL)")
     except Forbidden as e:
-        # In the extremely unlikely event it still trips duplicate-filter,
-        # we catch it so the Action doesn’t fail.
+        # If Twitter still flags it as duplicate, skip gracefully
         print("⚠️ Skipped posting (duplicate or forbidden):", e)
 else:
     print("✅ Skipped (there is day baseball today)")
