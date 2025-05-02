@@ -23,33 +23,30 @@ client = tweepy.Client(
 
 def no_day_baseball():
     """Return True if there are NO MLB games starting before 4 PM ET today."""
-    url = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
-    resp = requests.get(url).json()
+    scoreboard = requests.get(
+        "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+    ).json()
     eastern = pytz.timezone("US/Eastern")
     today = datetime.now(eastern).date()
 
-    for game in resp.get("events", []):
-        game_dt = datetime.fromisoformat(game["date"]).astimezone(eastern)
+    for event in scoreboard.get("events", []):
+        game_dt = datetime.fromisoformat(event["date"]).astimezone(eastern)
         if game_dt.date() == today and game_dt.time() < datetime.strptime("16:00", "%H:%M").time():
             return False
     return True
 
 if no_day_baseball():
-    # Append ?d=YYYYMMDD so Twitter sees a unique URL each day,
-    # but jsDelivr always serves the same image file.
-    eastern = pytz.timezone("US/Eastern")
-    suffix = datetime.now(eastern).strftime("%Y%m%d")
+    # Append ?d=YYYYMMDD to dodge duplicate‑content, but raw.githack.com will still serve
+    suffix = datetime.now(pytz.timezone("US/Eastern")).strftime("%Y%m%d")
     url = (
-        "https://cdn.jsdelivr.net/gh/"
-        "MTGPhish/no-day-baseball-bot@main/DayBaseball.jpg"
+        "https://raw.githack.com/"
+        "MTGPhish/no-day-baseball-bot/main/DayBaseball.jpg"
         f"?d={suffix}"
     )
-
     try:
         client.create_tweet(text=url)
-        print("✅ Posted meme link via v2 (jsDelivr URL)")
+        print("✅ Posted meme link via v2 (raw.githack.com)")
     except Forbidden as e:
-        # If Twitter still flags it as duplicate, skip gracefully
         print("⚠️ Skipped posting (duplicate or forbidden):", e)
 else:
     print("✅ Skipped (there is day baseball today)")
