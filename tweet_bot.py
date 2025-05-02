@@ -1,22 +1,25 @@
-import tweepy
 import os
 import requests
 from datetime import datetime
 import pytz
 from dotenv import load_dotenv
+import tweepy
 
-# Load keys
 load_dotenv()
+
+# Load your keys / tokens
 consumer_key        = os.getenv("API_KEY")
 consumer_secret     = os.getenv("API_SECRET")
 access_token        = os.getenv("ACCESS_TOKEN")
 access_token_secret = os.getenv("ACCESS_TOKEN_SECRET")
 
-# Auth
-auth = tweepy.OAuth1UserHandler(
-    consumer_key, consumer_secret, access_token, access_token_secret
+# Use Tweepy Client (v2)
+client = tweepy.Client(
+    consumer_key=consumer_key,
+    consumer_secret=consumer_secret,
+    access_token=access_token,
+    access_token_secret=access_token_secret,
 )
-api = tweepy.API(auth)
 
 def no_day_baseball():
     url = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
@@ -31,8 +34,10 @@ def no_day_baseball():
     return True
 
 if no_day_baseball():
-    # upload & post ONLY the meme
-    api.update_status(status="https://raw.githubusercontent.com/MTGPhish/no-day-baseball-bot/main/DayBaseball.jpg")
-    print("✅ Posted meme (no text).")
+    # Post only the raw.githubusercontent.com image URL
+    client.create_tweet(
+        text="https://raw.githubusercontent.com/MTGPhish/no-day-baseball-bot/main/DayBaseball.jpg"
+    )
+    print("✅ Posted meme link via v2")
 else:
-    print("✅ Skipped (there is day baseball today).")
+    print("✅ Skipped (there is day baseball today)")
