@@ -6,49 +6,51 @@ from dotenv import load_dotenv
 import tweepy
 from tweepy.errors import Forbidden
 
-# Load credentials from .env
+# ─── load your secrets from .env ───────────────────────────────────────────────
 load_dotenv()
-consumer_key        = os.getenv("API_KEY")
-consumer_secret     = os.getenv("API_SECRET")
-access_token        = os.getenv("ACCESS_TOKEN")
-access_token_secret = os.getenv("ACCESS_TOKEN_SECRET")
+CK  = os.getenv("API_KEY")
+CS  = os.getenv("API_SECRET")
+AT  = os.getenv("ACCESS_TOKEN")
+ATS = os.getenv("ACCESS_TOKEN_SECRET")
 
-# Initialize Tweepy v2 client
+# ─── v2 client (for posting) ─────────────────────────────────────────────────
 client = tweepy.Client(
-    consumer_key=consumer_key,
-    consumer_secret=consumer_secret,
-    access_token=access_token,
-    access_token_secret=access_token_secret,
+    consumer_key=CK,
+    consumer_secret=CS,
+    access_token=AT,
+    access_token_secret=ATS,
 )
 
+# ─── v1.1 API (for media_upload) ──────────────────────────────────────────────
+# OAuth1UserHandler is the new name in Tweepy v4 for the old OAuthHandler
+auth = tweepy.OAuth1UserHandler(CK, CS, AT, ATS)
+api_v1 = tweepy.API(auth)
+
+# ─── helper to check for day games ────────────────────────────────────────────
 def no_day_baseball():
-    """Return True if no MLB games start before 4 PM ET today."""
-    data = requests.get(
-        "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
-    ).json()
+    url = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+    data = requests.get(url).json()
     eastern = pytz.timezone("US/Eastern")
     today = datetime.now(eastern).date()
 
-    for evt in data.get("events", []):
-        game_dt = datetime.fromisoformat(evt["date"]).astimezone(eastern)
-        if (game_dt.date() == today
-            and game_dt.time() < datetime.strptime("16:00", "%H:%M").time()):
+    for ev in data.get("events", []):
+        gd = datetime.fromisoformat(ev["date"]).astimezone(eastern)
+        # any game before 4 PM ET is a “day” game
+        if gd.date()==today and gd.time() < datetime.strptime("16:00","%H:%M").time():
             return False
     return True
 
+# ─── main ─────────────────────────────────────────────────────────────────────
 if no_day_baseball():
-    # Append the date so Twitter treats each URL as unique
-    eastern = pytz.timezone("US/Eastern")
-    suffix = datetime.now(eastern).strftime("%Y%m%d")
-
-    # <-- Your Imgur direct link, must end in .jpeg -->
-    base_imgur = "https://i.imgur.com/iwCKCxC.jpeg"
-    tweet_url  = f"{base_imgur}?d={suffix}"
+    # upload the image in your repo root
+    # make sure DayBaseball.jpg is committed in your repo
+    media = api_v1.media_upload("DayBaseball.jpg")
 
     try:
-        client.create_tweet(text=tweet_url)
-        print("✅ Posted meme link via v2 (Imgur)")
+        # post a tweet **with** that media, no text needed
+        client.create_tweet(media_ids=[media.media_id])
+        print("✅ Posted meme image as media")
     except Forbidden as e:
-        print("⚠️ Skipped posting (duplicate or forbidden):", e)
+        print("⚠️ Skipped (duplicate or forbidden):", e)
 else:
     print("✅ Skipped (there is day baseball today)")
