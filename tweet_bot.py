@@ -32,8 +32,7 @@ def no_day_baseball():
 
 if no_day_baseball():
     # upload & post ONLY the meme
-    media = api.media_upload("DayBaseball.jpg")
-    api.update_status(status="", media_ids=[media.media_id])
+    api.update_status(status="https://raw.githubusercontent.com/MTGPhish/no-day-baseball-bot/main/DayBaseball.jpg")
     print("✅ Posted meme (no text).")
 else:
     print("✅ Skipped (there is day baseball today).")
