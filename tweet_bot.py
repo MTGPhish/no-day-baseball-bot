@@ -7,45 +7,47 @@ from dotenv import load_dotenv
 import tweepy
 from tweepy.errors import Forbidden
 
-# ─── Load your Twitter credentials from .env ──────────────────────────────────
+# ─── Load Twitter creds from .env ──────────────────────────────────────────────
 load_dotenv()
-consumer_key        = os.getenv("API_KEY")
-consumer_secret     = os.getenv("API_SECRET")
-access_token        = os.getenv("ACCESS_TOKEN")
-access_token_secret = os.getenv("ACCESS_TOKEN_SECRET")
+CK  = os.getenv("API_KEY")
+CS  = os.getenv("API_SECRET")
+AT  = os.getenv("ACCESS_TOKEN")
+ATS = os.getenv("ACCESS_TOKEN_SECRET")
 
-# ─── Set up Tweepy v2 client for posting tweets ───────────────────────────────
+# ─── Setup Tweepy clients ──────────────────────────────────────────────────────
 client = tweepy.Client(
-    consumer_key=consumer_key,
-    consumer_secret=consumer_secret,
-    access_token=access_token,
-    access_token_secret=access_token_secret,
+    consumer_key=CK,
+    consumer_secret=CS,
+    access_token=AT,
+    access_token_secret=ATS,
 )
-
-# ─── Set up Tweepy v1.1 API for media upload ─────────────────────────────────
-auth = tweepy.OAuth1UserHandler(consumer_key, consumer_secret, access_token, access_token_secret)
+auth = tweepy.OAuth1UserHandler(CK, CS, AT, ATS)
 api_v1 = tweepy.API(auth)
 
-# ─── Helper: returns True if NO MLB games start before 4PM ET today ───────────
-def no_day_baseball():
-    scoreboard = requests.get(
+# ─── Check scoreboard ──────────────────────────────────────────────────────────
+def no_day_baseball_but_some_games():
+    data = requests.get(
         "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
-    ).json()
+    ).json().get("events", [])
 
     eastern = pytz.timezone("US/Eastern")
     today   = datetime.now(eastern).date()
 
-    for event in scoreboard.get("events", []):
-        # parse the UTC ISO timestamp (with trailing “Z”) correctly
-        game_dt = parser.isoparse(event["date"]).astimezone(eastern)
-        # if any game starts before 16:00 ET, that's day baseball
+    # Skip if truly no games at all (off‑season, All‑Star, etc.)
+    if not data:
+        return False
+
+    # If any game starts before 16:00 ET today, that's day baseball → skip
+    for ev in data:
+        game_dt = parser.isoparse(ev["date"]).astimezone(eastern)
         if game_dt.date() == today and game_dt.time() < time(16, 0):
             return False
 
+    # There are games, but none before 4 PM ET
     return True
 
-# ─── Main: upload & tweet the meme if there’s no day baseball ────────────────
-if no_day_baseball():
+# ─── Main routine ─────────────────────────────────────────────────────────────
+if no_day_baseball_but_some_games():
     media = api_v1.media_upload("DayBaseball.jpg")
     try:
         client.create_tweet(media_ids=[media.media_id])
@@ -53,4 +55,4 @@ if no_day_baseball():
     except Forbidden as e:
         print("⚠️ Skipped posting (duplicate or forbidden):", e)
 else:
-    print("✅ Skipped (there is day baseball today)")
+    print("✅ Skipped (day games or no games scheduled today)")
