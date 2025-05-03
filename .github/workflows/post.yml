@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install tweepy python-dotenv requests pytz
+      - run: pip install tweepy python-dotenv requests pytz python-dateutil
 
       - run: python tweet_bot.py
         env:

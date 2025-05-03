@@ -1,56 +1,56 @@
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, time
 import pytz
+from dateutil import parser
 from dotenv import load_dotenv
 import tweepy
 from tweepy.errors import Forbidden
 
-# ─── load your secrets from .env ───────────────────────────────────────────────
+# ─── Load your Twitter credentials from .env ──────────────────────────────────
 load_dotenv()
-CK  = os.getenv("API_KEY")
-CS  = os.getenv("API_SECRET")
-AT  = os.getenv("ACCESS_TOKEN")
-ATS = os.getenv("ACCESS_TOKEN_SECRET")
+consumer_key        = os.getenv("API_KEY")
+consumer_secret     = os.getenv("API_SECRET")
+access_token        = os.getenv("ACCESS_TOKEN")
+access_token_secret = os.getenv("ACCESS_TOKEN_SECRET")
 
-# ─── v2 client (for posting) ─────────────────────────────────────────────────
+# ─── Set up Tweepy v2 client for posting tweets ───────────────────────────────
 client = tweepy.Client(
-    consumer_key=CK,
-    consumer_secret=CS,
-    access_token=AT,
-    access_token_secret=ATS,
+    consumer_key=consumer_key,
+    consumer_secret=consumer_secret,
+    access_token=access_token,
+    access_token_secret=access_token_secret,
 )
 
-# ─── v1.1 API (for media_upload) ──────────────────────────────────────────────
-# OAuth1UserHandler is the new name in Tweepy v4 for the old OAuthHandler
-auth = tweepy.OAuth1UserHandler(CK, CS, AT, ATS)
+# ─── Set up Tweepy v1.1 API for media upload ─────────────────────────────────
+auth = tweepy.OAuth1UserHandler(consumer_key, consumer_secret, access_token, access_token_secret)
 api_v1 = tweepy.API(auth)
 
-# ─── helper to check for day games ────────────────────────────────────────────
+# ─── Helper: returns True if NO MLB games start before 4PM ET today ───────────
 def no_day_baseball():
-    url = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
-    data = requests.get(url).json()
-    eastern = pytz.timezone("US/Eastern")
-    today = datetime.now(eastern).date()
+    scoreboard = requests.get(
+        "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+    ).json()
 
-    for ev in data.get("events", []):
-        gd = datetime.fromisoformat(ev["date"]).astimezone(eastern)
-        # any game before 4 PM ET is a “day” game
-        if gd.date()==today and gd.time() < datetime.strptime("16:00","%H:%M").time():
+    eastern = pytz.timezone("US/Eastern")
+    today   = datetime.now(eastern).date()
+
+    for event in scoreboard.get("events", []):
+        # parse the UTC ISO timestamp (with trailing “Z”) correctly
+        game_dt = parser.isoparse(event["date"]).astimezone(eastern)
+        # if any game starts before 16:00 ET, that's day baseball
+        if game_dt.date() == today and game_dt.time() < time(16, 0):
             return False
+
     return True
 
-# ─── main ─────────────────────────────────────────────────────────────────────
+# ─── Main: upload & tweet the meme if there’s no day baseball ────────────────
 if no_day_baseball():
-    # upload the image in your repo root
-    # make sure DayBaseball.jpg is committed in your repo
     media = api_v1.media_upload("DayBaseball.jpg")
-
     try:
-        # post a tweet **with** that media, no text needed
         client.create_tweet(media_ids=[media.media_id])
         print("✅ Posted meme image as media")
     except Forbidden as e:
-        print("⚠️ Skipped (duplicate or forbidden):", e)
+        print("⚠️ Skipped posting (duplicate or forbidden):", e)
 else:
     print("✅ Skipped (there is day baseball today)")
