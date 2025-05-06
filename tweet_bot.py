@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import tweepy
 from tweepy.errors import Forbidden
 
-# ─── Load Twitter credentials from .env ────────────────────────────────────────
+# ─── Load Twitter creds from .env ──────────────────────────────────────────────
 load_dotenv()
 CK  = os.getenv("API_KEY")
 CS  = os.getenv("API_SECRET")
@@ -55,6 +55,6 @@ if no_day_baseball_but_some_games():
         client.create_tweet(media_ids=[media.media_id])
         print("✅ Posted meme image as media")
     except Forbidden as e:
-        print("⚠️ Skipped posting (duplicate or forbidden):", e)
+        print("⚠️ Skipped (duplicate or forbidden):", e)
 else:
-    print("✅ Skipped (day games or no games scheduled today)")```
+    print("✅ Skipped (day games or no games scheduled today)")
