@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import tweepy
 from tweepy.errors import Forbidden
 
-# ─── Load Twitter creds from .env ──────────────────────────────────────────────
+# ─── Load Twitter credentials from .env ────────────────────────────────────────
 load_dotenv()
 CK  = os.getenv("API_KEY")
 CS  = os.getenv("API_SECRET")
@@ -37,13 +37,15 @@ def no_day_baseball_but_some_games():
     if not data:
         return False
 
-    # If any game starts before 16:00 ET today, that's day baseball → skip
+    # If any game starts before 16:00 ET today, that's day baseball → skip
     for ev in data:
         game_dt = parser.isoparse(ev["date"]).astimezone(eastern)
+        # DEBUG: log every parsed game time
+        print(f"DEBUG parsed game time → {game_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         if game_dt.date() == today and game_dt.time() < time(16, 0):
             return False
 
-    # There are games, but none before 4 PM ET
+    # There are games, but none before 4 PM ET
     return True
 
 # ─── Main routine ─────────────────────────────────────────────────────────────
@@ -55,4 +57,4 @@ if no_day_baseball_but_some_games():
     except Forbidden as e:
         print("⚠️ Skipped posting (duplicate or forbidden):", e)
 else:
-    print("✅ Skipped (day games or no games scheduled today)")
+    print("✅ Skipped (day games or no games scheduled today)")```
