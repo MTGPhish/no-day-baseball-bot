@@ -24,32 +24,44 @@ client = tweepy.Client(
 auth = tweepy.OAuth1UserHandler(CK, CS, AT, ATS)
 api_v1 = tweepy.API(auth)
 
-# ─── Check scoreboard ──────────────────────────────────────────────────────────
-def no_day_baseball_but_some_games():
-    data = requests.get(
-        "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
-    ).json().get("events", [])
-
+# ─── Fetch today’s MLB games via the official API ──────────────────────────────
+def fetch_today_games():
     eastern = pytz.timezone("US/Eastern")
-    today   = datetime.now(eastern).date()
+    today_str = datetime.now(eastern).strftime("%Y-%m-%d")
+    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today_str}"
+    resp = requests.get(url).json().get("dates", [])
+    if not resp:
+        return []
+    return resp[0].get("games", [])
 
-    # Skip if truly no games at all (off‑season, All‑Star, etc.)
-    if not data:
+# ─── Decide if we should post (games exist & none before 4 PM ET) ──────────────
+def should_post_meme():
+    games = fetch_today_games()
+
+    # DEBUG: log how many games fetched
+    print(f"DEBUG: fetched {len(games)} game(s) for today")
+
+    # 1) if no games at all: skip
+    if not games:
         return False
 
-    # If any game starts before 16:00 ET today, that's day baseball → skip
-    for ev in data:
-        game_dt = parser.isoparse(ev["date"]).astimezone(eastern)
-        # DEBUG: log every parsed game time
-        print(f"DEBUG parsed game time → {game_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        if game_dt.date() == today and game_dt.time() < time(16, 0):
+    eastern = pytz.timezone("US/Eastern")
+    cutoff = time(16, 0)
+
+    # 2) if any game starts before cutoff: skip
+    for g in games:
+        game_dt = parser.isoparse(g["gameDate"]).astimezone(eastern)
+        print(f"DEBUG: MLB game at {game_dt.strftime('%H:%M %Z')}")
+        if game_dt.time() < cutoff:
+            print("DEBUG: found a day game → skipping")
             return False
 
-    # There are games, but none before 4 PM ET
+    # 3) else: games exist but none before cutoff → post
+    print("DEBUG: no day games found → posting")
     return True
 
-# ─── Main routine ─────────────────────────────────────────────────────────────
-if no_day_baseball_but_some_games():
+# ─── Main: post the meme if appropriate ────────────────────────────────────────
+if should_post_meme():
     media = api_v1.media_upload("DayBaseball.jpg")
     try:
         client.create_tweet(media_ids=[media.media_id])
