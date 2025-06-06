@@ -7,14 +7,14 @@ from dotenv import load_dotenv
 import tweepy
 from tweepy.errors import Forbidden
 
-# ─── Load Twitter creds from .env ──────────────────────────────────────────────
+# ─── Load Twitter credentials from .env ─────────────────────────────────────────
 load_dotenv()
 CK  = os.getenv("API_KEY")
 CS  = os.getenv("API_SECRET")
 AT  = os.getenv("ACCESS_TOKEN")
 ATS = os.getenv("ACCESS_TOKEN_SECRET")
 
-# ─── Setup Tweepy clients ──────────────────────────────────────────────────────
+# ─── Setup Tweepy clients ───────────────────────────────────────────────────────
 client = tweepy.Client(
     consumer_key=CK,
     consumer_secret=CS,
@@ -34,39 +34,59 @@ def fetch_today_games():
         return []
     return resp[0].get("games", [])
 
-# ─── Decide if we should post (games exist & none before 4 PM ET) ──────────────
-def should_post_meme():
+# ─── Decide what to post: “larry” if early makeup, “bernie” if no day games, False otherwise ─────
+def decide_post_action():
     games = fetch_today_games()
+    eastern = pytz.timezone("US/Eastern")
+    today = datetime.now(eastern).date()
+    cutoff = time(16, 0)
 
-    # DEBUG: log how many games fetched
-    print(f"DEBUG: fetched {len(games)} game(s) for today")
-
-    # 1) if no games at all: skip
+    # If no games at all, skip
     if not games:
         return False
 
-    eastern = pytz.timezone("US/Eastern")
-    cutoff = time(16, 0)
-
-    # 2) if any game starts before cutoff: skip
+    early_makeup = False
     for g in games:
         game_dt = parser.isoparse(g["gameDate"]).astimezone(eastern)
-        print(f"DEBUG: MLB game at {game_dt.strftime('%H:%M %Z')}")
-        if game_dt.time() < cutoff:
-            print("DEBUG: found a day game → skipping")
-            return False
+        # Determine the original scheduled date; fallback to gameDate if missing
+        orig_date_str = g.get("originalDate", g["gameDate"])
+        orig_date = parser.isoparse(orig_date_str).astimezone(eastern).date()
 
-    # 3) else: games exist but none before cutoff → post
-    print("DEBUG: no day games found → posting")
-    return True
+        # If game starts before 4 PM ET:
+        if game_dt.date() == today and game_dt.time() < cutoff:
+            if orig_date != today:
+                # It’s a music-up (makeup) early game
+                early_makeup = True
+            else:
+                # It was originally scheduled as a day game → skip altogether
+                return False
 
-# ─── Main: post the meme if appropriate ────────────────────────────────────────
-if should_post_meme():
+    if early_makeup:
+        return "larry"
+
+    # No games before cutoff (but some scheduled) → post Bernie
+    return "bernie"
+
+# ─── Main: act based on decision ─────────────────────────────────────────────────
+action = decide_post_action()
+
+if action == "larry":
+    caption = "Day baseball? I'm conflicted."
+    gif_url = "https://tenor.com/view/larry-david-unsure-uncertain-cant-decide-undecided-gif-3529136"
+    tweet_text = f"{caption} {gif_url}"
+    try:
+        client.create_tweet(text=tweet_text)
+        print("✅ Posted Larry David GIF with caption")
+    except Forbidden as e:
+        print("⚠️ Skipped (duplicate or forbidden):", e)
+
+elif action == "bernie":
     media = api_v1.media_upload("DayBaseball.jpg")
     try:
         client.create_tweet(media_ids=[media.media_id])
-        print("✅ Posted meme image as media")
+        print("✅ Posted Bernie meme as media")
     except Forbidden as e:
         print("⚠️ Skipped (duplicate or forbidden):", e)
+
 else:
     print("✅ Skipped (day games or no games scheduled today)")
