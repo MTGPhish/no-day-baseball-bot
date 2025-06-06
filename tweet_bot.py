@@ -29,45 +29,45 @@ def fetch_today_games():
     eastern = pytz.timezone("US/Eastern")
     today_str = datetime.now(eastern).strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today_str}"
-    resp = requests.get(url).json().get("dates", [])
-    if not resp:
+    data = requests.get(url).json().get("dates", [])
+    if not data:
         return []
-    return resp[0].get("games", [])
+    return data[0].get("games", [])
 
-# ─── Decide what to post: “larry” if early makeup, “bernie” if no day games, False otherwise ─────
+# ─── Decide action: “larry” for early makeup, “bernie” for no early games, False otherwise ────────────────
 def decide_post_action():
     games = fetch_today_games()
     eastern = pytz.timezone("US/Eastern")
     today = datetime.now(eastern).date()
     cutoff = time(16, 0)
 
-    # If no games at all, skip
+    # 1) No games scheduled at all (off-season, etc.) → skip
     if not games:
         return False
 
     early_makeup = False
     for g in games:
+        # Parse the actual UTC start time into ET
         game_dt = parser.isoparse(g["gameDate"]).astimezone(eastern)
-        # Determine the original scheduled date; fallback to gameDate if missing
-        orig_date_str = g.get("originalDate", g["gameDate"])
-        orig_date = parser.isoparse(orig_date_str).astimezone(eastern).date()
+        print(f"DEBUG: MLB game at {game_dt.strftime('%H:%M %Z')} (doubleHeader={g.get('doubleHeader')})")
 
-        # If game starts before 4 PM ET:
+        # If it’s a pre-4 PM ET start
         if game_dt.date() == today and game_dt.time() < cutoff:
-            if orig_date != today:
-                # It’s a music-up (makeup) early game
+            # If it’s part of a doubleheader, this is almost certainly a makeup day game
+            if g.get("doubleHeader") == "Y":
                 early_makeup = True
             else:
-                # It was originally scheduled as a day game → skip altogether
+                # It was originally scheduled as a day game → skip posting
                 return False
 
+    # 2) If any pre-4 PM ET game was part of a doubleheader → Larry David
     if early_makeup:
         return "larry"
 
-    # No games before cutoff (but some scheduled) → post Bernie
+    # 3) Otherwise, games exist but none start before 4 PM ET → Bernie
     return "bernie"
 
-# ─── Main: act based on decision ─────────────────────────────────────────────────
+# ─── Main: post based on decision ────────────────────────────────────────────────
 action = decide_post_action()
 
 if action == "larry":
