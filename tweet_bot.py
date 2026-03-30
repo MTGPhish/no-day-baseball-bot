@@ -1,92 +1,138 @@
 import os
-import requests
 from datetime import datetime, time
-import pytz
-from dateutil import parser
-from dotenv import load_dotenv
-import tweepy
-from tweepy.errors import Forbidden
+from zoneinfo import ZoneInfo
 
-# ─── Load Twitter credentials from .env ─────────────────────────────────────────
-load_dotenv()
-CK  = os.getenv("API_KEY")
-CS  = os.getenv("API_SECRET")
-AT  = os.getenv("ACCESS_TOKEN")
-ATS = os.getenv("ACCESS_TOKEN_SECRET")
+EASTERN = ZoneInfo("America/New_York")
 
-# ─── Setup Tweepy clients ───────────────────────────────────────────────────────
-client = tweepy.Client(
-    consumer_key=CK,
-    consumer_secret=CS,
-    access_token=AT,
-    access_token_secret=ATS,
-)
-auth = tweepy.OAuth1UserHandler(CK, CS, AT, ATS)
-api_v1 = tweepy.API(auth)
 
-# ─── Fetch today’s MLB games via the official API ──────────────────────────────
-def fetch_today_games():
-    eastern = pytz.timezone("US/Eastern")
-    today_str = datetime.now(eastern).strftime("%Y-%m-%d")
-    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today_str}"
-    data = requests.get(url).json().get("dates", [])
-    if not data:
+def get_today_eastern(now=None):
+    current_time = now or datetime.now(EASTERN)
+    return current_time.astimezone(EASTERN).date()
+
+
+def get_target_date(now=None, schedule_date=None):
+    if schedule_date is not None:
+        return schedule_date
+
+    target_date = os.getenv("TARGET_DATE")
+    if target_date:
+        return datetime.fromisoformat(target_date).date()
+
+    return get_today_eastern(now)
+
+
+def parse_game_time(game, timezone=EASTERN):
+    game_date = game["gameDate"].replace("Z", "+00:00")
+    return datetime.fromisoformat(game_date).astimezone(timezone)
+
+
+def fetch_today_games(schedule_date=None, session=None):
+    import requests
+
+    target_date = schedule_date or get_today_eastern()
+    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={target_date.isoformat()}"
+    http = session or requests
+    response = http.get(url, timeout=10)
+    response.raise_for_status()
+    dates = response.json().get("dates", [])
+    if not dates:
         return []
-    return data[0].get("games", [])
+    return dates[0].get("games", [])
 
-# ─── Decide action: “larry” for early makeup, “bernie” for no early games, False otherwise ────────────────
-def decide_post_action():
-    games = fetch_today_games()
-    eastern = pytz.timezone("US/Eastern")
-    today = datetime.now(eastern).date()
+
+def decide_post_action(games=None, now=None):
+    target_date = get_target_date(now)
+    todays_games = games if games is not None else fetch_today_games(schedule_date=target_date)
     cutoff = time(16, 0)
 
-    # 1) No games scheduled at all (off-season, etc.) → skip
-    if not games:
+    if not todays_games:
         return False
 
     early_makeup = False
-    for g in games:
-        # Parse the actual UTC start time into ET
-        game_dt = parser.isoparse(g["gameDate"]).astimezone(eastern)
-        print(f"DEBUG: MLB game at {game_dt.strftime('%H:%M %Z')} (doubleHeader={g.get('doubleHeader')})")
+    for game in todays_games:
+        game_dt = parse_game_time(game)
+        print(
+            f"DEBUG: MLB game at {game_dt.strftime('%H:%M %Z')} "
+            f"(doubleHeader={game.get('doubleHeader')})"
+        )
 
-        # If it’s a pre-4 PM ET start
-        if game_dt.date() == today and game_dt.time() < cutoff:
-            # If it’s part of a doubleheader, this is almost certainly a makeup day game
-            if g.get("doubleHeader") == "Y":
+        if game_dt.date() == target_date and game_dt.time() < cutoff:
+            if game.get("doubleHeader") == "Y":
                 early_makeup = True
             else:
-                # It was originally scheduled as a day game → skip posting
                 return False
 
-    # 2) If any pre-4 PM ET game was part of a doubleheader → Larry David
     if early_makeup:
         return "larry"
 
-    # 3) Otherwise, games exist but none start before 4 PM ET → Bernie
     return "bernie"
 
-# ─── Main: post based on decision ────────────────────────────────────────────────
-action = decide_post_action()
 
-if action == "larry":
-    caption = "Day baseball? I'm conflicted."
-    gif_url = "https://tenor.com/view/larry-david-unsure-uncertain-cant-decide-undecided-gif-3529136"
-    tweet_text = f"{caption} {gif_url}"
-    try:
-        client.create_tweet(text=tweet_text)
-        print("✅ Posted Larry David GIF with caption")
-    except Forbidden as e:
-        print("⚠️ Skipped (duplicate or forbidden):", e)
+def create_twitter_clients():
+    from dotenv import load_dotenv
+    import tweepy
 
-elif action == "bernie":
-    media = api_v1.media_upload("DayBaseball.jpg")
-    try:
-        client.create_tweet(media_ids=[media.media_id])
-        print("✅ Posted Bernie meme as media")
-    except Forbidden as e:
-        print("⚠️ Skipped (duplicate or forbidden):", e)
+    load_dotenv()
+    consumer_key = os.getenv("API_KEY")
+    consumer_secret = os.getenv("API_SECRET")
+    access_token = os.getenv("ACCESS_TOKEN")
+    access_token_secret = os.getenv("ACCESS_TOKEN_SECRET")
 
-else:
-    print("✅ Skipped (day games or no games scheduled today)")
+    client = tweepy.Client(
+        consumer_key=consumer_key,
+        consumer_secret=consumer_secret,
+        access_token=access_token,
+        access_token_secret=access_token_secret,
+    )
+    auth = tweepy.OAuth1UserHandler(
+        consumer_key,
+        consumer_secret,
+        access_token,
+        access_token_secret,
+    )
+    api_v1 = tweepy.API(auth)
+    return client, api_v1
+
+
+def post_action(action, client, api_v1):
+    from tweepy.errors import Forbidden
+
+    if action == "larry":
+        caption = "Day baseball? I'm conflicted."
+        gif_url = "https://tenor.com/view/larry-david-unsure-uncertain-cant-decide-undecided-gif-3529136"
+        tweet_text = f"{caption} {gif_url}"
+        try:
+            client.create_tweet(text=tweet_text)
+            print("Posted Larry David GIF with caption")
+        except Forbidden as error:
+            print("Skipped (duplicate or forbidden):", error)
+        return
+
+    if action == "bernie":
+        try:
+            media = api_v1.media_upload("DayBaseball.jpg")
+            client.create_tweet(media_ids=[media.media_id])
+            print("Posted Bernie meme as media")
+        except Forbidden as error:
+            print("Skipped (duplicate or forbidden):", error)
+        return
+
+    print("Skipped (day games or no games scheduled today)")
+
+
+def main():
+    action = decide_post_action()
+    if os.getenv("DRY_RUN") == "1":
+        print(f"Dry run action: {action}")
+        return
+
+    if not action:
+        print("Skipped (day games or no games scheduled today)")
+        return
+
+    client, api_v1 = create_twitter_clients()
+    post_action(action, client, api_v1)
+
+
+if __name__ == "__main__":
+    main()

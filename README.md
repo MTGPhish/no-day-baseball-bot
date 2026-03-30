@@ -1,26 +1,46 @@
-# No Day Baseball Bot 🤠⚾️
+# No Day Baseball Bot
 
-**No Day Baseball** is an automated Twitter bot that gently reminds the MLB schedule team to bring us daytime baseball—every time they slip up.  Hosted via GitHub Actions, it runs daily at 8 AM ET and:
+No Day Baseball is an automated Twitter/X bot that complains when MLB schedules a full day of games without any true day baseball.
 
-1. Queries ESPN’s public MLB scoreboard  
-2. Detects if **there are games scheduled today** but **none start before 4 PM ET**  
-3. Uploads and tweets a meme image (Bernie asking for day baseball) when that happens  
-4. Silently skips posting on days with any early games—or when there are no games at all (off‑season, All‑Star break, etc.)
+Hosted with GitHub Actions, it runs daily at `12:00 UTC` and:
 
-## Features
+1. Queries MLB's public schedule API for today's games.
+2. Checks whether any game starts before `4:00 PM` Eastern.
+3. Posts the Bernie meme image when games exist but none start before `4:00 PM` Eastern.
+4. Skips posting when there is a normal early game or no games at all.
+5. Posts a Larry David message when the only early game appears to be a doubleheader makeup game.
 
-- **Zero maintenance**: fully cloud‑hosted, no local machine required  
-- **Duplicate‑safe**: gracefully handles Twitter’s duplicate-content rules  
-- **Off‑season aware**: won’t post during breaks when no games are scheduled  
+## Behavior Notes
 
----
+- `4:00 PM Eastern` is treated as not early. The bot only counts starts before `4:00 PM`.
+- The scheduled workflow time is fixed in UTC. During Eastern Daylight Time that is `8:00 AM`, and during Eastern Standard Time that is `7:00 AM`.
 
-🛠️ **Setup & Configuration**
+## Testing
 
-1. Fork & clone the repo  
-2. Create a Twitter developer app with Read & Write permissions  
-3. Populate a `.env` with your API keys & tokens  
-4. Push your changes and configure the four GitHub Secrets  
-5. Watch it run (and tweet) every morning at 8 AM ET!
+The repo includes unit tests for the posting decision logic and the MLB schedule fetch behavior.
 
-Pull requests, contributions, and meme‑upgrades welcome! 🎉
+Run them with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+You can also dry-run the bot for a specific Eastern date without posting:
+
+```bash
+TARGET_DATE=2026-03-31 DRY_RUN=1 python tweet_bot.py
+```
+
+## Setup
+
+1. Create a Twitter developer app with read and write permissions.
+2. Provide these environment variables locally or as GitHub Actions secrets:
+   - `API_KEY`
+   - `API_SECRET`
+   - `ACCESS_TOKEN`
+   - `ACCESS_TOKEN_SECRET`
+3. Run the bot with:
+
+```bash
+python tweet_bot.py
+```
