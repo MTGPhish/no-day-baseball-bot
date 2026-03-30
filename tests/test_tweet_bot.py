@@ -2,7 +2,7 @@ import os
 import unittest
 from datetime import datetime
 
-from tweet_bot import decide_post_action, fetch_today_games, get_target_date
+from tweet_bot import create_tweet_with_retry, decide_post_action, fetch_today_games, get_target_date
 
 
 def make_game(iso_time, doubleheader="N"):
@@ -87,6 +87,55 @@ class FetchTodayGamesTests(unittest.TestCase):
         self.assertEqual(len(games), 1)
         self.assertIn("date=2026-03-30", session.last_url)
         self.assertEqual(session.last_timeout, 10)
+
+
+class RetryTests(unittest.TestCase):
+    def test_retries_after_temporary_twitter_error(self):
+        class TwitterServerError(Exception):
+            pass
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def create_tweet(self, text=None, media_ids=None):
+                self.calls += 1
+                if self.calls < 3:
+                    raise TwitterServerError("temporary failure")
+                return {"ok": True, "text": text, "media_ids": media_ids}
+
+        fake_client = FakeClient()
+
+        import sys
+        import types
+
+        original_tweepy = sys.modules.get("tweepy")
+        original_tweepy_errors = sys.modules.get("tweepy.errors")
+        tweepy_module = types.ModuleType("tweepy")
+        tweepy_errors = types.ModuleType("tweepy.errors")
+        tweepy_errors.TwitterServerError = TwitterServerError
+        sys.modules["tweepy"] = tweepy_module
+        sys.modules["tweepy.errors"] = tweepy_errors
+        try:
+            result = create_tweet_with_retry(
+                fake_client,
+                text="hello",
+                attempts=3,
+                sleep_seconds=0,
+            )
+        finally:
+            if original_tweepy is not None:
+                sys.modules["tweepy"] = original_tweepy
+            else:
+                sys.modules.pop("tweepy", None)
+
+            if original_tweepy_errors is not None:
+                sys.modules["tweepy.errors"] = original_tweepy_errors
+            else:
+                sys.modules.pop("tweepy.errors", None)
+
+        self.assertEqual(fake_client.calls, 3)
+        self.assertEqual(result["text"], "hello")
 
 
 if __name__ == "__main__":

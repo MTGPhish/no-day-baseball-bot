@@ -1,5 +1,6 @@
 import os
 from datetime import datetime, time
+from time import sleep
 from zoneinfo import ZoneInfo
 
 EASTERN = ZoneInfo("America/New_York")
@@ -94,27 +95,46 @@ def create_twitter_clients():
     return client, api_v1
 
 
+def create_tweet_with_retry(client, *, text=None, media_ids=None, attempts=3, sleep_seconds=5):
+    from tweepy.errors import TwitterServerError
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return client.create_tweet(text=text, media_ids=media_ids)
+        except TwitterServerError as error:
+            if attempt == attempts:
+                raise
+            print(f"Temporary Twitter error on attempt {attempt}/{attempts}: {error}")
+            sleep(sleep_seconds)
+
+
 def post_action(action, client, api_v1):
-    from tweepy.errors import Forbidden
+    from tweepy.errors import Forbidden, TwitterServerError
 
     if action == "larry":
         caption = "Day baseball? I'm conflicted."
         gif_url = "https://tenor.com/view/larry-david-unsure-uncertain-cant-decide-undecided-gif-3529136"
         tweet_text = f"{caption} {gif_url}"
         try:
-            client.create_tweet(text=tweet_text)
+            create_tweet_with_retry(client, text=tweet_text)
             print("Posted Larry David GIF with caption")
         except Forbidden as error:
             print("Skipped (duplicate or forbidden):", error)
+        except TwitterServerError as error:
+            print("Failed after retries due to Twitter server error:", error)
+            raise
         return
 
     if action == "bernie":
         try:
             media = api_v1.media_upload("DayBaseball.jpg")
-            client.create_tweet(media_ids=[media.media_id])
+            create_tweet_with_retry(client, media_ids=[media.media_id])
             print("Posted Bernie meme as media")
         except Forbidden as error:
             print("Skipped (duplicate or forbidden):", error)
+        except TwitterServerError as error:
+            print("Failed after retries due to Twitter server error:", error)
+            raise
         return
 
     print("Skipped (day games or no games scheduled today)")
