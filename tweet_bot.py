@@ -4,6 +4,16 @@ from time import sleep
 from zoneinfo import ZoneInfo
 
 EASTERN = ZoneInfo("America/New_York")
+REQUIRED_TWITTER_ENV_VARS = (
+    "API_KEY",
+    "API_SECRET",
+    "ACCESS_TOKEN",
+    "ACCESS_TOKEN_SECRET",
+)
+
+
+class BotConfigurationError(RuntimeError):
+    pass
 
 
 def get_today_eastern(now=None):
@@ -17,7 +27,12 @@ def get_target_date(now=None, schedule_date=None):
 
     target_date = os.getenv("TARGET_DATE")
     if target_date:
-        return datetime.fromisoformat(target_date).date()
+        try:
+            return datetime.fromisoformat(target_date).date()
+        except ValueError as error:
+            raise BotConfigurationError(
+                f"Invalid TARGET_DATE value {target_date!r}; expected YYYY-MM-DD"
+            ) from error
 
     return get_today_eastern(now)
 
@@ -74,10 +89,17 @@ def create_twitter_clients():
     import tweepy
 
     load_dotenv()
-    consumer_key = os.getenv("API_KEY")
-    consumer_secret = os.getenv("API_SECRET")
-    access_token = os.getenv("ACCESS_TOKEN")
-    access_token_secret = os.getenv("ACCESS_TOKEN_SECRET")
+    credentials = {name: os.getenv(name) for name in REQUIRED_TWITTER_ENV_VARS}
+    missing = [name for name, value in credentials.items() if not value]
+    if missing:
+        raise BotConfigurationError(
+            "Missing Twitter credentials: " + ", ".join(missing)
+        )
+
+    consumer_key = credentials["API_KEY"]
+    consumer_secret = credentials["API_SECRET"]
+    access_token = credentials["ACCESS_TOKEN"]
+    access_token_secret = credentials["ACCESS_TOKEN_SECRET"]
 
     client = tweepy.Client(
         consumer_key=consumer_key,
@@ -95,7 +117,7 @@ def create_twitter_clients():
     return client, api_v1
 
 
-def create_tweet_with_retry(client, *, text=None, media_ids=None, attempts=3, sleep_seconds=5):
+def create_tweet_with_retry(client, *, text=None, media_ids=None, attempts=5, sleep_seconds=5):
     from tweepy.errors import TwitterServerError
 
     for attempt in range(1, attempts + 1):
@@ -105,7 +127,7 @@ def create_tweet_with_retry(client, *, text=None, media_ids=None, attempts=3, sl
             if attempt == attempts:
                 raise
             print(f"Temporary Twitter error on attempt {attempt}/{attempts}: {error}")
-            sleep(sleep_seconds)
+            sleep(sleep_seconds * attempt)
 
 
 def post_action(action, client, api_v1):
@@ -121,8 +143,7 @@ def post_action(action, client, api_v1):
         except Forbidden as error:
             print("Skipped (duplicate or forbidden):", error)
         except TwitterServerError as error:
-            print("Failed after retries due to Twitter server error:", error)
-            raise
+            print("Skipped (Twitter server unavailable after retries):", error)
         return
 
     if action == "bernie":
@@ -133,25 +154,47 @@ def post_action(action, client, api_v1):
         except Forbidden as error:
             print("Skipped (duplicate or forbidden):", error)
         except TwitterServerError as error:
-            print("Failed after retries due to Twitter server error:", error)
-            raise
+            print("Skipped (Twitter server unavailable after retries):", error)
         return
 
     print("Skipped (day games or no games scheduled today)")
 
 
+def get_runtime_error_types():
+    runtime_errors = [BotConfigurationError]
+
+    try:
+        import requests
+
+        runtime_errors.append(requests.RequestException)
+    except ImportError:
+        pass
+
+    try:
+        from tweepy.errors import TweepyException
+
+        runtime_errors.append(TweepyException)
+    except ImportError:
+        pass
+
+    return tuple(runtime_errors)
+
+
 def main():
-    action = decide_post_action()
-    if os.getenv("DRY_RUN") == "1":
-        print(f"Dry run action: {action}")
-        return
+    try:
+        action = decide_post_action()
+        if os.getenv("DRY_RUN") == "1":
+            print(f"Dry run action: {action}")
+            return
 
-    if not action:
-        print("Skipped (day games or no games scheduled today)")
-        return
+        if not action:
+            print("Skipped (day games or no games scheduled today)")
+            return
 
-    client, api_v1 = create_twitter_clients()
-    post_action(action, client, api_v1)
+        client, api_v1 = create_twitter_clients()
+        post_action(action, client, api_v1)
+    except get_runtime_error_types() as error:
+        print(f"Skipped (external dependency or configuration issue: {error})")
 
 
 if __name__ == "__main__":

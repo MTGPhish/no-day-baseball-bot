@@ -2,7 +2,15 @@ import os
 import unittest
 from datetime import datetime
 
-from tweet_bot import create_tweet_with_retry, decide_post_action, fetch_today_games, get_target_date
+from tweet_bot import (
+    BotConfigurationError,
+    create_twitter_clients,
+    create_tweet_with_retry,
+    decide_post_action,
+    fetch_today_games,
+    get_target_date,
+    post_action,
+)
 
 
 def make_game(iso_time, doubleheader="N"):
@@ -51,6 +59,11 @@ class DecidePostActionTests(unittest.TestCase):
     def test_target_date_env_overrides_now(self):
         os.environ["TARGET_DATE"] = "2026-03-31"
         self.assertEqual(get_target_date(now=self.now).isoformat(), "2026-03-31")
+
+    def test_invalid_target_date_raises_configuration_error(self):
+        os.environ["TARGET_DATE"] = "03/31/2026"
+        with self.assertRaises(BotConfigurationError):
+            get_target_date(now=self.now)
 
 
 class FetchTodayGamesTests(unittest.TestCase):
@@ -136,6 +149,105 @@ class RetryTests(unittest.TestCase):
 
         self.assertEqual(fake_client.calls, 3)
         self.assertEqual(result["text"], "hello")
+
+    def test_uses_increasing_backoff_between_attempts(self):
+        class TwitterServerError(Exception):
+            pass
+
+        class FakeClient:
+            def create_tweet(self, text=None, media_ids=None):
+                raise TwitterServerError("temporary failure")
+
+        fake_client = FakeClient()
+
+        import sys
+        import types
+        from unittest.mock import patch
+
+        original_tweepy = sys.modules.get("tweepy")
+        original_tweepy_errors = sys.modules.get("tweepy.errors")
+        tweepy_module = types.ModuleType("tweepy")
+        tweepy_errors = types.ModuleType("tweepy.errors")
+        tweepy_errors.TwitterServerError = TwitterServerError
+        sys.modules["tweepy"] = tweepy_module
+        sys.modules["tweepy.errors"] = tweepy_errors
+        try:
+            with patch("tweet_bot.sleep") as sleep_mock:
+                with self.assertRaises(TwitterServerError):
+                    create_tweet_with_retry(
+                        fake_client,
+                        text="hello",
+                        attempts=3,
+                        sleep_seconds=2,
+                    )
+        finally:
+            if original_tweepy is not None:
+                sys.modules["tweepy"] = original_tweepy
+            else:
+                sys.modules.pop("tweepy", None)
+
+            if original_tweepy_errors is not None:
+                sys.modules["tweepy.errors"] = original_tweepy_errors
+            else:
+                sys.modules.pop("tweepy.errors", None)
+
+        self.assertEqual([call.args[0] for call in sleep_mock.call_args_list], [2, 4])
+
+
+class PostActionTests(unittest.TestCase):
+    def test_post_action_skips_final_twitter_server_error(self):
+        class Forbidden(Exception):
+            pass
+
+        class TwitterServerError(Exception):
+            pass
+
+        class FakeClient:
+            def create_tweet(self, text=None, media_ids=None):
+                raise TwitterServerError("still unavailable")
+
+        class FakeMedia:
+            media_id = 123
+
+        class FakeApiV1:
+            def media_upload(self, path):
+                return FakeMedia()
+
+        import sys
+        import types
+
+        original_tweepy = sys.modules.get("tweepy")
+        original_tweepy_errors = sys.modules.get("tweepy.errors")
+        tweepy_module = types.ModuleType("tweepy")
+        tweepy_errors = types.ModuleType("tweepy.errors")
+        tweepy_errors.Forbidden = Forbidden
+        tweepy_errors.TwitterServerError = TwitterServerError
+        sys.modules["tweepy"] = tweepy_module
+        sys.modules["tweepy.errors"] = tweepy_errors
+        try:
+            post_action("bernie", FakeClient(), FakeApiV1())
+        finally:
+            if original_tweepy is not None:
+                sys.modules["tweepy"] = original_tweepy
+            else:
+                sys.modules.pop("tweepy", None)
+
+            if original_tweepy_errors is not None:
+                sys.modules["tweepy.errors"] = original_tweepy_errors
+            else:
+                sys.modules.pop("tweepy.errors", None)
+
+
+class ConfigurationTests(unittest.TestCase):
+    def tearDown(self):
+        for name in ("API_KEY", "API_SECRET", "ACCESS_TOKEN", "ACCESS_TOKEN_SECRET"):
+            os.environ.pop(name, None)
+
+    def test_create_twitter_clients_requires_all_credentials(self):
+        with self.assertRaises(BotConfigurationError) as context:
+            create_twitter_clients()
+
+        self.assertIn("Missing Twitter credentials", str(context.exception))
 
 
 if __name__ == "__main__":
