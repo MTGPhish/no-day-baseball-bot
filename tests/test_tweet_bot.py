@@ -108,17 +108,17 @@ class RetryTests(unittest.TestCase):
         class TwitterServerError(Exception):
             pass
 
-        class FakeApiV1:
+        class FakeClient:
             def __init__(self):
                 self.calls = 0
 
-            def update_status(self, status=None, media_ids=None):
+            def create_tweet(self, text=None, media_ids=None, user_auth=None):
                 self.calls += 1
                 if self.calls < 3:
                     raise TwitterServerError("temporary failure")
-                return {"ok": True, "text": status, "media_ids": media_ids}
+                return {"ok": True, "text": text, "media_ids": media_ids, "user_auth": user_auth}
 
-        fake_api_v1 = FakeApiV1()
+        fake_client = FakeClient()
 
         import sys
         import types
@@ -132,7 +132,7 @@ class RetryTests(unittest.TestCase):
         sys.modules["tweepy.errors"] = tweepy_errors
         try:
             result = create_tweet_with_retry(
-                fake_api_v1,
+                fake_client,
                 text="hello",
                 attempts=3,
                 sleep_seconds=0,
@@ -148,18 +148,19 @@ class RetryTests(unittest.TestCase):
             else:
                 sys.modules.pop("tweepy.errors", None)
 
-        self.assertEqual(fake_api_v1.calls, 3)
+        self.assertEqual(fake_client.calls, 3)
         self.assertEqual(result["text"], "hello")
+        self.assertTrue(result["user_auth"])
 
     def test_uses_increasing_backoff_between_attempts(self):
         class TwitterServerError(Exception):
             pass
 
-        class FakeApiV1:
-            def update_status(self, status=None, media_ids=None):
+        class FakeClient:
+            def create_tweet(self, text=None, media_ids=None, user_auth=None):
                 raise TwitterServerError("temporary failure")
 
-        fake_api_v1 = FakeApiV1()
+        fake_client = FakeClient()
 
         import sys
         import types
@@ -176,7 +177,7 @@ class RetryTests(unittest.TestCase):
             with patch("tweet_bot.sleep") as sleep_mock:
                 with self.assertRaises(TwitterServerError):
                     create_tweet_with_retry(
-                        fake_api_v1,
+                        fake_client,
                         text="hello",
                         attempts=3,
                         sleep_seconds=2,
@@ -203,8 +204,8 @@ class PostActionTests(unittest.TestCase):
         class TwitterServerError(Exception):
             pass
 
-        class FakeApiV1:
-            def update_status(self, status=None, media_ids=None):
+        class FakeClient:
+            def create_tweet(self, text=None, media_ids=None, user_auth=None):
                 raise TwitterServerError("still unavailable")
 
         class FakeMedia:
@@ -229,7 +230,7 @@ class PostActionTests(unittest.TestCase):
         sys.modules["tweepy"] = tweepy_module
         sys.modules["tweepy.errors"] = tweepy_errors
         try:
-            post_action("bernie", FakeApiV1WithMedia())
+            post_action("bernie", FakeClient(), FakeApiV1WithMedia())
         finally:
             if original_tweepy is not None:
                 sys.modules["tweepy"] = original_tweepy
@@ -248,21 +249,25 @@ class PostActionTests(unittest.TestCase):
         class TwitterServerError(Exception):
             pass
 
-        class FakeApiV1:
+        class FakeClient:
             def __init__(self):
                 self.text = None
                 self.media_ids = None
+                self.user_auth = None
 
-            def update_status(self, status=None, media_ids=None):
-                self.text = status
+            def create_tweet(self, text=None, media_ids=None, user_auth=None):
+                self.text = text
                 self.media_ids = media_ids
+                self.user_auth = user_auth
                 return {"ok": True}
 
         class FakeMedia:
             media_id = 123
 
-        class FakeApiV1WithMedia(FakeApiV1):
-            def media_upload(self, path):
+        class FakeApiV1WithMedia:
+            def media_upload(self, path, media_category=None):
+                self.path = path
+                self.media_category = media_category
                 return FakeMedia()
 
         import sys
@@ -277,9 +282,11 @@ class PostActionTests(unittest.TestCase):
         sys.modules["tweepy"] = tweepy_module
         sys.modules["tweepy.errors"] = tweepy_errors
         try:
+            fake_client = FakeClient()
             fake_api_v1 = FakeApiV1WithMedia()
             post_action(
                 "bernie",
+                fake_client,
                 fake_api_v1,
                 target_date=datetime.fromisoformat("2026-04-21T08:00:00-04:00").date(),
             )
@@ -294,8 +301,10 @@ class PostActionTests(unittest.TestCase):
             else:
                 sys.modules.pop("tweepy.errors", None)
 
-        self.assertEqual(fake_api_v1.text, "No day baseball on April 21, 2026.")
-        self.assertEqual(fake_api_v1.media_ids, [123])
+        self.assertEqual(fake_client.text, "No day baseball on April 21, 2026.")
+        self.assertEqual(fake_client.media_ids, [123])
+        self.assertTrue(fake_client.user_auth)
+        self.assertEqual(fake_api_v1.media_category, "tweet_image")
 
 
 class FormattingTests(unittest.TestCase):

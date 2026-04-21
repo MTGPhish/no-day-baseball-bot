@@ -106,6 +106,12 @@ def create_twitter_clients():
 
     import tweepy
 
+    client = tweepy.Client(
+        consumer_key=consumer_key,
+        consumer_secret=consumer_secret,
+        access_token=access_token,
+        access_token_secret=access_token_secret,
+    )
     auth = tweepy.OAuth1UserHandler(
         consumer_key,
         consumer_secret,
@@ -113,15 +119,15 @@ def create_twitter_clients():
         access_token_secret,
     )
     api_v1 = tweepy.API(auth)
-    return api_v1
+    return client, api_v1
 
 
-def create_tweet_with_retry(api_v1, *, text=None, media_ids=None, attempts=5, sleep_seconds=5):
+def create_tweet_with_retry(client, *, text=None, media_ids=None, attempts=5, sleep_seconds=5):
     from tweepy.errors import TwitterServerError
 
     for attempt in range(1, attempts + 1):
         try:
-            return api_v1.update_status(status=text, media_ids=media_ids)
+            return client.create_tweet(text=text, media_ids=media_ids, user_auth=True)
         except TwitterServerError as error:
             if attempt == attempts:
                 raise
@@ -129,7 +135,7 @@ def create_tweet_with_retry(api_v1, *, text=None, media_ids=None, attempts=5, sl
             sleep(sleep_seconds * attempt)
 
 
-def post_action(action, api_v1, *, target_date=None):
+def post_action(action, client, api_v1, *, target_date=None):
     from tweepy.errors import Forbidden, TwitterServerError
 
     formatted_target_date = format_target_date(target_date or get_target_date())
@@ -139,7 +145,7 @@ def post_action(action, api_v1, *, target_date=None):
         gif_url = "https://tenor.com/view/larry-david-unsure-uncertain-cant-decide-undecided-gif-3529136"
         tweet_text = f"{caption} {gif_url}"
         try:
-            create_tweet_with_retry(api_v1, text=tweet_text)
+            create_tweet_with_retry(client, text=tweet_text)
             print("Posted Larry David GIF with caption")
         except Forbidden as error:
             print("Skipped (duplicate or forbidden):", error)
@@ -150,8 +156,8 @@ def post_action(action, api_v1, *, target_date=None):
     if action == "bernie":
         tweet_text = f"No day baseball on {formatted_target_date}."
         try:
-            media = api_v1.media_upload("DayBaseball.jpg")
-            create_tweet_with_retry(api_v1, text=tweet_text, media_ids=[media.media_id])
+            media = api_v1.media_upload("DayBaseball.jpg", media_category="tweet_image")
+            create_tweet_with_retry(client, text=tweet_text, media_ids=[media.media_id])
             print("Posted Bernie meme as media")
         except Forbidden as error:
             print("Skipped (duplicate or forbidden):", error)
@@ -195,8 +201,8 @@ def main():
             print("Skipped (day games or no games scheduled today)")
             return
 
-        api_v1 = create_twitter_clients()
-        post_action(action, api_v1, target_date=target_date)
+        client, api_v1 = create_twitter_clients()
+        post_action(action, client, api_v1, target_date=target_date)
     except get_runtime_error_types() as error:
         print(f"Skipped (external dependency or configuration issue: {error})")
 
