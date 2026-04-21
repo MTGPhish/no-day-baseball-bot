@@ -212,11 +212,8 @@ class PostActionTests(unittest.TestCase):
             media_id = 123
 
         class FakeApiV1WithMedia:
-            def media_upload(self, path):
+            def media_upload(self, path, media_category=None):
                 return FakeMedia()
-
-            def update_status(self, status=None, media_ids=None):
-                raise TwitterServerError("still unavailable")
 
         import sys
         import types
