@@ -24,6 +24,9 @@ def main():
         missing_list = ", ".join(missing)
         raise SystemExit(f"Missing required environment variables: {missing_list}")
 
+    if redirect_uri.startswith("http://localhost") or redirect_uri.startswith("http://127.0.0.1"):
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
     oauth2_user_handler = tweepy.OAuth2UserHandler(
         client_id=client_id,
         redirect_uri=redirect_uri,
