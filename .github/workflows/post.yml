@@ -1,9 +1,8 @@
 name: Post Meme If No Day Baseball
 
 on:
-  push:
   schedule:
-    - cron: "0 12 * * *"   # 12:00 UTC, which is 8:00 AM during Eastern Daylight Time
+    - cron: "5 13 * * *"   # 13:05 UTC, which is 8:05 AM during U.S. Central Daylight Time
   workflow_dispatch:
 
 jobs:
@@ -20,16 +19,7 @@ jobs:
 
       - run: python -m unittest discover -s tests -v
 
-      - name: Dry run tomorrow's slate on push
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          export TARGET_DATE="$(TZ=America/New_York date -d tomorrow +%F)"
-          export DRY_RUN=1
-          python tweet_bot.py
-
       - name: Post scheduled tweet
-        if: github.event_name != 'push'
         run: python tweet_bot.py
         env:
           API_KEY:            ${{ secrets.API_KEY }}
