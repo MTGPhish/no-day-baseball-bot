@@ -11,6 +11,7 @@ from tweet_bot import (
     format_target_date,
     get_target_date,
     post_action,
+    refresh_oauth2_access_token,
 )
 
 
@@ -194,6 +195,34 @@ class RetryTests(unittest.TestCase):
                 sys.modules.pop("tweepy.errors", None)
 
         self.assertEqual([call.args[0] for call in sleep_mock.call_args_list], [2, 4])
+
+
+class OAuth2RefreshTests(unittest.TestCase):
+    def test_refresh_oauth2_access_token_uses_basic_auth_header(self):
+        import base64
+        from unittest.mock import patch
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"access_token": "new-access-token"}
+
+        with patch("requests.post", return_value=FakeResponse()) as post_mock:
+            access_token = refresh_oauth2_access_token("client-id", "client-secret", "refresh-token")
+
+        self.assertEqual(access_token, "new-access-token")
+        _, kwargs = post_mock.call_args
+        self.assertEqual(kwargs["data"]["grant_type"], "refresh_token")
+        self.assertEqual(kwargs["data"]["refresh_token"], "refresh-token")
+        self.assertEqual(kwargs["timeout"], 30)
+        expected_basic = base64.b64encode(b"client-id:client-secret").decode("utf-8")
+        self.assertEqual(kwargs["headers"]["Authorization"], f"Basic {expected_basic}")
+        self.assertEqual(
+            kwargs["headers"]["Content-Type"],
+            "application/x-www-form-urlencoded",
+        )
 
 
 class PostActionTests(unittest.TestCase):

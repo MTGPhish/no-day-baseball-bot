@@ -143,23 +143,27 @@ def create_twitter_clients():
 
 
 def refresh_oauth2_access_token(client_id, client_secret, refresh_token):
-    from requests_oauthlib import OAuth2Session
+    import base64
+    import requests
 
     token_url = "https://api.x.com/2/oauth2/token"
-    oauth = OAuth2Session(
-        client_id=client_id,
-        token={
-            "access_token": "placeholder",
-            "refresh_token": refresh_token,
-            "token_type": "Bearer",
+    basic_token = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode(
+        "utf-8"
+    )
+    response = requests.post(
+        token_url,
+        headers={
+            "Authorization": f"Basic {basic_token}",
+            "Content-Type": "application/x-www-form-urlencoded",
         },
+        data={
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        },
+        timeout=30,
     )
-    refreshed_token = oauth.refresh_token(
-        token_url=token_url,
-        client_id=client_id,
-        client_secret=client_secret,
-        refresh_token=refresh_token,
-    )
+    response.raise_for_status()
+    refreshed_token = response.json()
 
     rotated_refresh_token = refreshed_token.get("refresh_token")
     if rotated_refresh_token and rotated_refresh_token != refresh_token:
