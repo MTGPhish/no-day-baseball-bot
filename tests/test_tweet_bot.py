@@ -8,6 +8,7 @@ from tweet_bot import (
     create_tweet_with_retry,
     decide_post_action,
     fetch_today_games,
+    format_target_date,
     get_target_date,
     post_action,
 )
@@ -236,6 +237,69 @@ class PostActionTests(unittest.TestCase):
                 sys.modules["tweepy.errors"] = original_tweepy_errors
             else:
                 sys.modules.pop("tweepy.errors", None)
+
+    def test_post_action_includes_date_in_bernie_tweet_text(self):
+        class Forbidden(Exception):
+            pass
+
+        class TwitterServerError(Exception):
+            pass
+
+        class FakeClient:
+            def __init__(self):
+                self.text = None
+                self.media_ids = None
+
+            def create_tweet(self, text=None, media_ids=None):
+                self.text = text
+                self.media_ids = media_ids
+                return {"ok": True}
+
+        class FakeMedia:
+            media_id = 123
+
+        class FakeApiV1:
+            def media_upload(self, path):
+                return FakeMedia()
+
+        import sys
+        import types
+
+        original_tweepy = sys.modules.get("tweepy")
+        original_tweepy_errors = sys.modules.get("tweepy.errors")
+        tweepy_module = types.ModuleType("tweepy")
+        tweepy_errors = types.ModuleType("tweepy.errors")
+        tweepy_errors.Forbidden = Forbidden
+        tweepy_errors.TwitterServerError = TwitterServerError
+        sys.modules["tweepy"] = tweepy_module
+        sys.modules["tweepy.errors"] = tweepy_errors
+        try:
+            fake_client = FakeClient()
+            post_action(
+                "bernie",
+                fake_client,
+                FakeApiV1(),
+                target_date=datetime.fromisoformat("2026-04-21T08:00:00-04:00").date(),
+            )
+        finally:
+            if original_tweepy is not None:
+                sys.modules["tweepy"] = original_tweepy
+            else:
+                sys.modules.pop("tweepy", None)
+
+            if original_tweepy_errors is not None:
+                sys.modules["tweepy.errors"] = original_tweepy_errors
+            else:
+                sys.modules.pop("tweepy.errors", None)
+
+        self.assertEqual(fake_client.text, "No day baseball on April 21, 2026.")
+        self.assertEqual(fake_client.media_ids, [123])
+
+
+class FormattingTests(unittest.TestCase):
+    def test_format_target_date_uses_readable_month_day_year(self):
+        target_date = datetime.fromisoformat("2026-04-21T08:00:00-04:00").date()
+        self.assertEqual(format_target_date(target_date), "April 21, 2026")
 
 
 class ConfigurationTests(unittest.TestCase):

@@ -42,6 +42,10 @@ def parse_game_time(game, timezone=EASTERN):
     return datetime.fromisoformat(game_date).astimezone(timezone)
 
 
+def format_target_date(target_date):
+    return f"{target_date.strftime('%B')} {target_date.day}, {target_date.year}"
+
+
 def fetch_today_games(schedule_date=None, session=None):
     import requests
 
@@ -56,8 +60,8 @@ def fetch_today_games(schedule_date=None, session=None):
     return dates[0].get("games", [])
 
 
-def decide_post_action(games=None, now=None):
-    target_date = get_target_date(now)
+def decide_post_action(games=None, now=None, target_date=None):
+    target_date = target_date or get_target_date(now)
     todays_games = games if games is not None else fetch_today_games(schedule_date=target_date)
     cutoff = time(16, 0)
 
@@ -130,11 +134,13 @@ def create_tweet_with_retry(client, *, text=None, media_ids=None, attempts=5, sl
             sleep(sleep_seconds * attempt)
 
 
-def post_action(action, client, api_v1):
+def post_action(action, client, api_v1, *, target_date=None):
     from tweepy.errors import Forbidden, TwitterServerError
 
+    formatted_target_date = format_target_date(target_date or get_target_date())
+
     if action == "larry":
-        caption = "Day baseball? I'm conflicted."
+        caption = f"Day baseball? I'm conflicted on {formatted_target_date}."
         gif_url = "https://tenor.com/view/larry-david-unsure-uncertain-cant-decide-undecided-gif-3529136"
         tweet_text = f"{caption} {gif_url}"
         try:
@@ -147,9 +153,10 @@ def post_action(action, client, api_v1):
         return
 
     if action == "bernie":
+        tweet_text = f"No day baseball on {formatted_target_date}."
         try:
             media = api_v1.media_upload("DayBaseball.jpg")
-            create_tweet_with_retry(client, media_ids=[media.media_id])
+            create_tweet_with_retry(client, text=tweet_text, media_ids=[media.media_id])
             print("Posted Bernie meme as media")
         except Forbidden as error:
             print("Skipped (duplicate or forbidden):", error)
@@ -182,7 +189,9 @@ def get_runtime_error_types():
 
 def main():
     try:
-        action = decide_post_action()
+        target_date = get_target_date()
+        games = fetch_today_games(schedule_date=target_date)
+        action = decide_post_action(games=games, target_date=target_date)
         if os.getenv("DRY_RUN") == "1":
             print(f"Dry run action: {action}")
             return
@@ -192,7 +201,7 @@ def main():
             return
 
         client, api_v1 = create_twitter_clients()
-        post_action(action, client, api_v1)
+        post_action(action, client, api_v1, target_date=target_date)
     except get_runtime_error_types() as error:
         print(f"Skipped (external dependency or configuration issue: {error})")
 
