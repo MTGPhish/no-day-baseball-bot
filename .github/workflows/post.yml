@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install tweepy python-dotenv requests
+      - run: pip install tweepy python-dotenv requests requests-oauthlib
 
       - run: python -m unittest discover -s tests -v
 
@@ -26,3 +26,6 @@ jobs:
           API_SECRET:         ${{ secrets.API_SECRET }}
           ACCESS_TOKEN:       ${{ secrets.ACCESS_TOKEN }}
           ACCESS_TOKEN_SECRET: ${{ secrets.ACCESS_TOKEN_SECRET }}
+          OAUTH2_CLIENT_ID:   ${{ secrets.OAUTH2_CLIENT_ID }}
+          OAUTH2_CLIENT_SECRET: ${{ secrets.OAUTH2_CLIENT_SECRET }}
+          OAUTH2_REFRESH_TOKEN: ${{ secrets.OAUTH2_REFRESH_TOKEN }}

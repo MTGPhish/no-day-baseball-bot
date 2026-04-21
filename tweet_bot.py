@@ -10,6 +10,11 @@ REQUIRED_TWITTER_ENV_VARS = (
     "ACCESS_TOKEN",
     "ACCESS_TOKEN_SECRET",
 )
+OPTIONAL_OAUTH2_ENV_VARS = (
+    "OAUTH2_CLIENT_ID",
+    "OAUTH2_CLIENT_SECRET",
+    "OAUTH2_REFRESH_TOKEN",
+)
 
 
 class BotConfigurationError(RuntimeError):
@@ -103,15 +108,30 @@ def create_twitter_clients():
     consumer_secret = credentials["API_SECRET"]
     access_token = credentials["ACCESS_TOKEN"]
     access_token_secret = credentials["ACCESS_TOKEN_SECRET"]
+    oauth2_client_id = os.getenv("OAUTH2_CLIENT_ID")
+    oauth2_client_secret = os.getenv("OAUTH2_CLIENT_SECRET")
+    oauth2_refresh_token = os.getenv("OAUTH2_REFRESH_TOKEN")
 
     import tweepy
 
-    client = tweepy.Client(
-        consumer_key=consumer_key,
-        consumer_secret=consumer_secret,
-        access_token=access_token,
-        access_token_secret=access_token_secret,
-    )
+    if all((oauth2_client_id, oauth2_client_secret, oauth2_refresh_token)):
+        client = tweepy.Client(
+            bearer_token=refresh_oauth2_access_token(
+                oauth2_client_id,
+                oauth2_client_secret,
+                oauth2_refresh_token,
+            )
+        )
+        client_user_auth = False
+    else:
+        client = tweepy.Client(
+            consumer_key=consumer_key,
+            consumer_secret=consumer_secret,
+            access_token=access_token,
+            access_token_secret=access_token_secret,
+        )
+        client_user_auth = True
+
     auth = tweepy.OAuth1UserHandler(
         consumer_key,
         consumer_secret,
@@ -119,15 +139,52 @@ def create_twitter_clients():
         access_token_secret,
     )
     api_v1 = tweepy.API(auth)
-    return client, api_v1
+    return client, client_user_auth, api_v1
 
 
-def create_tweet_with_retry(client, *, text=None, media_ids=None, attempts=5, sleep_seconds=5):
+def refresh_oauth2_access_token(client_id, client_secret, refresh_token):
+    from requests_oauthlib import OAuth2Session
+
+    token_url = "https://api.x.com/2/oauth2/token"
+    oauth = OAuth2Session(
+        client_id=client_id,
+        token={
+            "access_token": "placeholder",
+            "refresh_token": refresh_token,
+            "token_type": "Bearer",
+        },
+    )
+    refreshed_token = oauth.refresh_token(
+        token_url=token_url,
+        client_id=client_id,
+        client_secret=client_secret,
+        refresh_token=refresh_token,
+    )
+
+    rotated_refresh_token = refreshed_token.get("refresh_token")
+    if rotated_refresh_token and rotated_refresh_token != refresh_token:
+        print(
+            "NOTICE: OAUTH2_REFRESH_TOKEN rotated. "
+            "Update the GitHub secret to keep future runs healthy."
+        )
+
+    return refreshed_token["access_token"]
+
+
+def create_tweet_with_retry(
+    client,
+    *,
+    text=None,
+    media_ids=None,
+    attempts=5,
+    sleep_seconds=5,
+    user_auth=True,
+):
     from tweepy.errors import TwitterServerError
 
     for attempt in range(1, attempts + 1):
         try:
-            return client.create_tweet(text=text, media_ids=media_ids, user_auth=True)
+            return client.create_tweet(text=text, media_ids=media_ids, user_auth=user_auth)
         except TwitterServerError as error:
             if attempt == attempts:
                 raise
@@ -135,7 +192,7 @@ def create_tweet_with_retry(client, *, text=None, media_ids=None, attempts=5, sl
             sleep(sleep_seconds * attempt)
 
 
-def post_action(action, client, api_v1, *, target_date=None):
+def post_action(action, client, api_v1, *, target_date=None, client_user_auth=True):
     from tweepy.errors import Forbidden, TwitterServerError
 
     formatted_target_date = format_target_date(target_date or get_target_date())
@@ -145,7 +202,7 @@ def post_action(action, client, api_v1, *, target_date=None):
         gif_url = "https://tenor.com/view/larry-david-unsure-uncertain-cant-decide-undecided-gif-3529136"
         tweet_text = f"{caption} {gif_url}"
         try:
-            create_tweet_with_retry(client, text=tweet_text)
+            create_tweet_with_retry(client, text=tweet_text, user_auth=client_user_auth)
             print("Posted Larry David GIF with caption")
         except Forbidden as error:
             print("Skipped (duplicate or forbidden):", error)
@@ -157,7 +214,12 @@ def post_action(action, client, api_v1, *, target_date=None):
         tweet_text = f"No day baseball on {formatted_target_date}."
         try:
             media = api_v1.media_upload("DayBaseball.jpg", media_category="tweet_image")
-            create_tweet_with_retry(client, text=tweet_text, media_ids=[media.media_id])
+            create_tweet_with_retry(
+                client,
+                text=tweet_text,
+                media_ids=[media.media_id],
+                user_auth=client_user_auth,
+            )
             print("Posted Bernie meme as media")
         except Forbidden as error:
             print("Skipped (duplicate or forbidden):", error)
@@ -201,8 +263,14 @@ def main():
             print("Skipped (day games or no games scheduled today)")
             return
 
-        client, api_v1 = create_twitter_clients()
-        post_action(action, client, api_v1, target_date=target_date)
+        client, client_user_auth, api_v1 = create_twitter_clients()
+        post_action(
+            action,
+            client,
+            api_v1,
+            target_date=target_date,
+            client_user_auth=client_user_auth,
+        )
     except get_runtime_error_types() as error:
         print(f"Skipped (external dependency or configuration issue: {error})")
 
