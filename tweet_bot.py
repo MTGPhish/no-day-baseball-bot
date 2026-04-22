@@ -115,12 +115,10 @@ def create_twitter_clients():
     import tweepy
 
     if all((oauth2_client_id, oauth2_client_secret, oauth2_refresh_token)):
-        client = tweepy.Client(
-            bearer_token=refresh_oauth2_access_token(
-                oauth2_client_id,
-                oauth2_client_secret,
-                oauth2_refresh_token,
-            )
+        client = refresh_oauth2_access_token(
+            oauth2_client_id,
+            oauth2_client_secret,
+            oauth2_refresh_token,
         )
         client_user_auth = False
     else:
@@ -184,19 +182,71 @@ def create_tweet_with_retry(
     sleep_seconds=5,
     user_auth=True,
 ):
+    import requests
     from tweepy.errors import TwitterServerError
 
     for attempt in range(1, attempts + 1):
         try:
+            if isinstance(client, str):
+                payload = {"text": text}
+                if media_ids:
+                    payload["media"] = {"media_ids": [str(media_id) for media_id in media_ids]}
+
+                response = requests.post(
+                    "https://api.x.com/2/tweets",
+                    headers={
+                        "Authorization": f"Bearer {client}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=30,
+                )
+
+                if response.status_code >= 500:
+                    raise requests.HTTPError(
+                        f"{response.status_code} {response.reason}",
+                        response=response,
+                    )
+
+                response.raise_for_status()
+                return response.json()
+
             return client.create_tweet(text=text, media_ids=media_ids, user_auth=user_auth)
         except TwitterServerError as error:
             if attempt == attempts:
                 raise
             print(f"Temporary Twitter error on attempt {attempt}/{attempts}: {error}")
             sleep(sleep_seconds * attempt)
+        except requests.HTTPError as error:
+            status_code = getattr(error.response, "status_code", None)
+            if status_code is None or status_code < 500 or attempt == attempts:
+                raise
+            print(f"Temporary Twitter error on attempt {attempt}/{attempts}: {error}")
+            sleep(sleep_seconds * attempt)
+
+
+def format_twitter_error(error):
+    details = [str(error)]
+
+    api_errors = getattr(error, "api_errors", None)
+    if api_errors:
+        details.append(f"api_errors={api_errors}")
+
+    response = getattr(error, "response", None)
+    if response is not None:
+        status_code = getattr(response, "status_code", None)
+        if status_code is not None:
+            details.append(f"status_code={status_code}")
+
+        response_text = getattr(response, "text", None)
+        if response_text:
+            details.append(f"response_text={response_text}")
+
+    return " | ".join(details)
 
 
 def post_action(action, client, api_v1, *, target_date=None, client_user_auth=True):
+    import requests
     from tweepy.errors import Forbidden, TwitterServerError
 
     formatted_target_date = format_target_date(target_date or get_target_date())
@@ -209,7 +259,9 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
             create_tweet_with_retry(client, text=tweet_text, user_auth=client_user_auth)
             print("Posted Larry David GIF with caption")
         except Forbidden as error:
-            print("Skipped (duplicate or forbidden):", error)
+            print("Skipped (duplicate or forbidden):", format_twitter_error(error))
+        except requests.HTTPError as error:
+            print("Skipped (duplicate or forbidden):", format_twitter_error(error))
         except TwitterServerError as error:
             print("Skipped (Twitter server unavailable after retries):", error)
         return
@@ -221,12 +273,14 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
             create_tweet_with_retry(
                 client,
                 text=tweet_text,
-                media_ids=[media.media_id],
+                media_ids=[getattr(media, "media_id_string", str(media.media_id))],
                 user_auth=client_user_auth,
             )
             print("Posted Bernie meme as media")
         except Forbidden as error:
-            print("Skipped (duplicate or forbidden):", error)
+            print("Skipped (duplicate or forbidden):", format_twitter_error(error))
+        except requests.HTTPError as error:
+            print("Skipped (duplicate or forbidden):", format_twitter_error(error))
         except TwitterServerError as error:
             print("Skipped (Twitter server unavailable after retries):", error)
         return

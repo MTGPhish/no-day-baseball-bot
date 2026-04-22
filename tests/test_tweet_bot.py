@@ -8,6 +8,7 @@ from tweet_bot import (
     create_tweet_with_retry,
     decide_post_action,
     fetch_today_games,
+    format_twitter_error,
     format_target_date,
     get_target_date,
     post_action,
@@ -224,6 +225,23 @@ class OAuth2RefreshTests(unittest.TestCase):
             "application/x-www-form-urlencoded",
         )
 
+    def test_format_twitter_error_includes_response_text(self):
+        class FakeResponse:
+            status_code = 403
+            text = '{"detail":"duplicate content"}'
+
+        class FakeError(Exception):
+            def __str__(self):
+                return "403 Forbidden"
+
+            api_errors = [{"message": "duplicate content"}]
+            response = FakeResponse()
+
+        formatted = format_twitter_error(FakeError())
+        self.assertIn("403 Forbidden", formatted)
+        self.assertIn("status_code=403", formatted)
+        self.assertIn("duplicate content", formatted)
+
 
 class PostActionTests(unittest.TestCase):
     def test_post_action_skips_final_twitter_server_error(self):
@@ -239,6 +257,7 @@ class PostActionTests(unittest.TestCase):
 
         class FakeMedia:
             media_id = 123
+            media_id_string = "123"
 
         class FakeApiV1WithMedia:
             def media_upload(self, path, media_category=None):
@@ -328,7 +347,7 @@ class PostActionTests(unittest.TestCase):
                 sys.modules.pop("tweepy.errors", None)
 
         self.assertEqual(fake_client.text, "No day baseball on April 21, 2026.")
-        self.assertEqual(fake_client.media_ids, [123])
+        self.assertEqual(fake_client.media_ids, ["123"])
         self.assertTrue(fake_client.user_auth)
         self.assertEqual(fake_api_v1.media_category, "tweet_image")
 
