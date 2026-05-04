@@ -11,6 +11,7 @@ from tweet_bot import (
     format_twitter_error,
     format_target_date,
     get_target_date,
+    is_duplicate_tweet_error,
     post_action,
     refresh_oauth2_access_token,
 )
@@ -242,9 +243,31 @@ class OAuth2RefreshTests(unittest.TestCase):
         self.assertIn("status_code=403", formatted)
         self.assertIn("duplicate content", formatted)
 
+    def test_is_duplicate_tweet_error_detects_duplicate_content(self):
+        class FakeResponse:
+            status_code = 403
+            text = '{"detail":"You are not allowed to create a Tweet with duplicate content."}'
+
+        class FakeError(Exception):
+            response = FakeResponse()
+
+        self.assertTrue(is_duplicate_tweet_error(FakeError()))
+
+    def test_is_duplicate_tweet_error_rejects_other_forbidden_errors(self):
+        class FakeResponse:
+            status_code = 403
+            text = '{"detail":"Invalid or expired token."}'
+
+        class FakeError(Exception):
+            response = FakeResponse()
+
+        self.assertFalse(is_duplicate_tweet_error(FakeError()))
+
 
 class PostActionTests(unittest.TestCase):
-    def test_post_action_skips_final_twitter_server_error(self):
+    def test_post_action_raises_final_twitter_server_error(self):
+        from unittest.mock import patch
+
         class Forbidden(Exception):
             pass
 
@@ -275,7 +298,51 @@ class PostActionTests(unittest.TestCase):
         sys.modules["tweepy"] = tweepy_module
         sys.modules["tweepy.errors"] = tweepy_errors
         try:
-            post_action("bernie", FakeClient(), FakeApiV1WithMedia())
+            with patch("tweet_bot.sleep"):
+                with self.assertRaises(TwitterServerError):
+                    post_action("bernie", FakeClient(), FakeApiV1WithMedia())
+        finally:
+            if original_tweepy is not None:
+                sys.modules["tweepy"] = original_tweepy
+            else:
+                sys.modules.pop("tweepy", None)
+
+            if original_tweepy_errors is not None:
+                sys.modules["tweepy.errors"] = original_tweepy_errors
+            else:
+                sys.modules.pop("tweepy.errors", None)
+
+    def test_post_action_skips_duplicate_forbidden_error(self):
+        class Forbidden(Exception):
+            response = type(
+                "FakeResponse",
+                (),
+                {
+                    "status_code": 403,
+                    "text": '{"detail":"duplicate Tweet content"}',
+                },
+            )()
+
+        class TwitterServerError(Exception):
+            pass
+
+        class FakeClient:
+            def create_tweet(self, text=None, media_ids=None, user_auth=None):
+                raise Forbidden("403 Forbidden")
+
+        import sys
+        import types
+
+        original_tweepy = sys.modules.get("tweepy")
+        original_tweepy_errors = sys.modules.get("tweepy.errors")
+        tweepy_module = types.ModuleType("tweepy")
+        tweepy_errors = types.ModuleType("tweepy.errors")
+        tweepy_errors.Forbidden = Forbidden
+        tweepy_errors.TwitterServerError = TwitterServerError
+        sys.modules["tweepy"] = tweepy_module
+        sys.modules["tweepy.errors"] = tweepy_errors
+        try:
+            post_action("larry", FakeClient(), object())
         finally:
             if original_tweepy is not None:
                 sys.modules["tweepy"] = original_tweepy
@@ -360,7 +427,16 @@ class FormattingTests(unittest.TestCase):
 
 class ConfigurationTests(unittest.TestCase):
     def tearDown(self):
-        for name in ("API_KEY", "API_SECRET", "ACCESS_TOKEN", "ACCESS_TOKEN_SECRET"):
+        for name in (
+            "API_KEY",
+            "API_SECRET",
+            "ACCESS_TOKEN",
+            "ACCESS_TOKEN_SECRET",
+            "OAUTH2_CLIENT_ID",
+            "OAUTH2_CLIENT_SECRET",
+            "OAUTH2_REFRESH_TOKEN",
+            "X_AUTH_MODE",
+        ):
             os.environ.pop(name, None)
 
     def test_create_twitter_clients_requires_all_credentials(self):
@@ -368,6 +444,61 @@ class ConfigurationTests(unittest.TestCase):
             create_twitter_clients()
 
         self.assertIn("Missing Twitter credentials", str(context.exception))
+
+    def test_create_twitter_clients_uses_oauth1_by_default_when_oauth2_secrets_exist(self):
+        import sys
+        import types
+        from unittest.mock import patch
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        class FakeOAuth1UserHandler:
+            def __init__(self, *args):
+                self.args = args
+
+        class FakeAPI:
+            def __init__(self, auth):
+                self.auth = auth
+
+        for name in ("API_KEY", "API_SECRET", "ACCESS_TOKEN", "ACCESS_TOKEN_SECRET"):
+            os.environ[name] = name.lower()
+
+        os.environ["OAUTH2_CLIENT_ID"] = "stale-client-id"
+        os.environ["OAUTH2_CLIENT_SECRET"] = "stale-client-secret"
+        os.environ["OAUTH2_REFRESH_TOKEN"] = "stale-refresh-token"
+
+        original_tweepy = sys.modules.get("tweepy")
+        tweepy_module = types.ModuleType("tweepy")
+        tweepy_module.Client = FakeClient
+        tweepy_module.OAuth1UserHandler = FakeOAuth1UserHandler
+        tweepy_module.API = FakeAPI
+        sys.modules["tweepy"] = tweepy_module
+
+        try:
+            with patch("tweet_bot.refresh_oauth2_access_token") as refresh_mock:
+                client, client_user_auth, api_v1 = create_twitter_clients()
+        finally:
+            if original_tweepy is not None:
+                sys.modules["tweepy"] = original_tweepy
+            else:
+                sys.modules.pop("tweepy", None)
+
+        refresh_mock.assert_not_called()
+        self.assertTrue(client_user_auth)
+        self.assertEqual(client.kwargs["consumer_key"], "api_key")
+        self.assertIsInstance(api_v1, FakeAPI)
+
+    def test_oauth2_auth_mode_requires_oauth2_credentials(self):
+        for name in ("API_KEY", "API_SECRET", "ACCESS_TOKEN", "ACCESS_TOKEN_SECRET"):
+            os.environ[name] = name.lower()
+        os.environ["X_AUTH_MODE"] = "oauth2"
+
+        with self.assertRaises(BotConfigurationError) as context:
+            create_twitter_clients()
+
+        self.assertIn("Missing OAuth2 credentials", str(context.exception))
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 No Day Baseball is an automated Twitter/X bot that complains when MLB schedules a full day of games without any true day baseball.
 
-Hosted with GitHub Actions, it runs daily at `12:00 UTC` and:
+Hosted with GitHub Actions, it runs daily at `13:05 UTC` and:
 
 1. Queries MLB's public schedule API for today's games.
 2. Checks whether any game starts before `4:00 PM` Eastern.
@@ -10,10 +10,12 @@ Hosted with GitHub Actions, it runs daily at `12:00 UTC` and:
 4. Skips posting when there is a normal early game or no games at all.
 5. Posts a Larry David message when the only early game appears to be a doubleheader makeup game.
 
+Posting failures are treated as workflow failures. Duplicate-content reruns are skipped, but invalid credentials, expired tokens, X API errors, and MLB API errors should make the GitHub Actions run fail so the bot does not silently miss Bernie days.
+
 ## Behavior Notes
 
 - `4:00 PM Eastern` is treated as not early. The bot only counts starts before `4:00 PM`.
-- The scheduled workflow time is fixed in UTC. During Eastern Daylight Time that is `8:00 AM`, and during Eastern Standard Time that is `7:00 AM`.
+- The scheduled workflow time is fixed in UTC. During Eastern Daylight Time that is `9:05 AM`, and during Eastern Standard Time that is `8:05 AM`.
 
 ## Testing
 
@@ -44,3 +46,5 @@ TARGET_DATE=2026-03-31 DRY_RUN=1 python tweet_bot.py
 ```bash
 python tweet_bot.py
 ```
+
+The scheduled bot uses OAuth 1.0a user credentials by default. Leave old `OAUTH2_*` secrets unused unless you deliberately set `X_AUTH_MODE=oauth2`; OAuth2 refresh tokens can rotate and need a persistence path if you use them in unattended automation.

@@ -15,6 +15,8 @@ OPTIONAL_OAUTH2_ENV_VARS = (
     "OAUTH2_CLIENT_SECRET",
     "OAUTH2_REFRESH_TOKEN",
 )
+OAUTH2_AUTH_MODE = "oauth2"
+DEFAULT_AUTH_MODE = "oauth1"
 
 
 class BotConfigurationError(RuntimeError):
@@ -111,17 +113,32 @@ def create_twitter_clients():
     oauth2_client_id = os.getenv("OAUTH2_CLIENT_ID")
     oauth2_client_secret = os.getenv("OAUTH2_CLIENT_SECRET")
     oauth2_refresh_token = os.getenv("OAUTH2_REFRESH_TOKEN")
+    auth_mode = os.getenv("X_AUTH_MODE", DEFAULT_AUTH_MODE).lower()
 
     import tweepy
 
-    if all((oauth2_client_id, oauth2_client_secret, oauth2_refresh_token)):
+    if auth_mode == OAUTH2_AUTH_MODE:
+        missing_oauth2 = [
+            name
+            for name, value in (
+                ("OAUTH2_CLIENT_ID", oauth2_client_id),
+                ("OAUTH2_CLIENT_SECRET", oauth2_client_secret),
+                ("OAUTH2_REFRESH_TOKEN", oauth2_refresh_token),
+            )
+            if not value
+        ]
+        if missing_oauth2:
+            raise BotConfigurationError(
+                "Missing OAuth2 credentials: " + ", ".join(missing_oauth2)
+            )
+
         client = refresh_oauth2_access_token(
             oauth2_client_id,
             oauth2_client_secret,
             oauth2_refresh_token,
         )
         client_user_auth = False
-    else:
+    elif auth_mode == DEFAULT_AUTH_MODE:
         client = tweepy.Client(
             consumer_key=consumer_key,
             consumer_secret=consumer_secret,
@@ -129,6 +146,10 @@ def create_twitter_clients():
             access_token_secret=access_token_secret,
         )
         client_user_auth = True
+    else:
+        raise BotConfigurationError(
+            f"Invalid X_AUTH_MODE value {auth_mode!r}; expected oauth1 or oauth2"
+        )
 
     auth = tweepy.OAuth1UserHandler(
         consumer_key,
@@ -245,6 +266,13 @@ def format_twitter_error(error):
     return " | ".join(details)
 
 
+def is_duplicate_tweet_error(error):
+    details = format_twitter_error(error).lower()
+    return "duplicate" in details and (
+        "tweet" in details or "post" in details or "content" in details
+    )
+
+
 def post_action(action, client, api_v1, *, target_date=None, client_user_auth=True):
     import requests
     from tweepy.errors import Forbidden, TwitterServerError
@@ -259,11 +287,18 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
             create_tweet_with_retry(client, text=tweet_text, user_auth=client_user_auth)
             print("Posted Larry David GIF with caption")
         except Forbidden as error:
-            print("Skipped (duplicate or forbidden):", format_twitter_error(error))
+            if is_duplicate_tweet_error(error):
+                print("Skipped (duplicate tweet):", format_twitter_error(error))
+            else:
+                raise
         except requests.HTTPError as error:
-            print("Skipped (duplicate or forbidden):", format_twitter_error(error))
+            if is_duplicate_tweet_error(error):
+                print("Skipped (duplicate tweet):", format_twitter_error(error))
+            else:
+                raise
         except TwitterServerError as error:
-            print("Skipped (Twitter server unavailable after retries):", error)
+            print("Twitter server unavailable after retries:", error)
+            raise
         return
 
     if action == "bernie":
@@ -278,11 +313,18 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
             )
             print("Posted Bernie meme as media")
         except Forbidden as error:
-            print("Skipped (duplicate or forbidden):", format_twitter_error(error))
+            if is_duplicate_tweet_error(error):
+                print("Skipped (duplicate tweet):", format_twitter_error(error))
+            else:
+                raise
         except requests.HTTPError as error:
-            print("Skipped (duplicate or forbidden):", format_twitter_error(error))
+            if is_duplicate_tweet_error(error):
+                print("Skipped (duplicate tweet):", format_twitter_error(error))
+            else:
+                raise
         except TwitterServerError as error:
-            print("Skipped (Twitter server unavailable after retries):", error)
+            print("Twitter server unavailable after retries:", error)
+            raise
         return
 
     print("Skipped (day games or no games scheduled today)")
@@ -330,7 +372,8 @@ def main():
             client_user_auth=client_user_auth,
         )
     except get_runtime_error_types() as error:
-        print(f"Skipped (external dependency or configuration issue: {error})")
+        print(f"Failed (external dependency, posting, or configuration issue: {error})")
+        raise SystemExit(1) from error
 
 
 if __name__ == "__main__":
