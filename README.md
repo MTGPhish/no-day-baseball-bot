@@ -47,4 +47,4 @@ TARGET_DATE=2026-03-31 DRY_RUN=1 python tweet_bot.py
 python tweet_bot.py
 ```
 
-The scheduled bot uses OAuth 1.0a user credentials by default. Leave old `OAUTH2_*` secrets unused unless you deliberately set `X_AUTH_MODE=oauth2`; OAuth2 refresh tokens can rotate and need a persistence path if you use them in unattended automation.
+The scheduled bot posts through the OAuth 1.0a/v1.1 status endpoint because the configured X app is not attached to a Project and X rejects its v2 create-tweet calls. Leave old `OAUTH2_*` secrets unused unless you deliberately migrate the X app into a Project and update the posting path.

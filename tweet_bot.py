@@ -246,6 +246,19 @@ def create_tweet_with_retry(
             sleep(sleep_seconds * attempt)
 
 
+def create_status_with_retry(api_v1, *, text=None, media_ids=None, attempts=5, sleep_seconds=5):
+    from tweepy.errors import TwitterServerError
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return api_v1.update_status(status=text, media_ids=media_ids)
+        except TwitterServerError as error:
+            if attempt == attempts:
+                raise
+            print(f"Temporary Twitter error on attempt {attempt}/{attempts}: {error}")
+            sleep(sleep_seconds * attempt)
+
+
 def format_twitter_error(error):
     details = [str(error)]
 
@@ -284,7 +297,7 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
         gif_url = "https://tenor.com/view/larry-david-unsure-uncertain-cant-decide-undecided-gif-3529136"
         tweet_text = f"{caption} {gif_url}"
         try:
-            create_tweet_with_retry(client, text=tweet_text, user_auth=client_user_auth)
+            create_status_with_retry(api_v1, text=tweet_text)
             print("Posted Larry David GIF with caption")
         except Forbidden as error:
             if is_duplicate_tweet_error(error):
@@ -305,11 +318,10 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
         tweet_text = f"No day baseball on {formatted_target_date}."
         try:
             media = api_v1.media_upload("DayBaseball.jpg", media_category="tweet_image")
-            create_tweet_with_retry(
-                client,
+            create_status_with_retry(
+                api_v1,
                 text=tweet_text,
                 media_ids=[getattr(media, "media_id_string", str(media.media_id))],
-                user_auth=client_user_auth,
             )
             print("Posted Bernie meme as media")
         except Forbidden as error:
