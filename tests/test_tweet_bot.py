@@ -243,6 +243,15 @@ class OAuth2RefreshTests(unittest.TestCase):
         self.assertIn("status_code=403", formatted)
         self.assertIn("duplicate content", formatted)
 
+    def test_format_twitter_error_includes_api_messages(self):
+        class FakeError(Exception):
+            api_codes = [453]
+            api_messages = ["App must be attached to a Project"]
+
+        formatted = format_twitter_error(FakeError())
+        self.assertIn("api_codes=[453]", formatted)
+        self.assertIn("App must be attached to a Project", formatted)
+
     def test_is_duplicate_tweet_error_detects_duplicate_content(self):
         class FakeResponse:
             status_code = 403
@@ -274,6 +283,10 @@ class PostActionTests(unittest.TestCase):
         class TwitterServerError(Exception):
             pass
 
+        class FakeClient:
+            def create_tweet(self, text=None, media_ids=None, user_auth=None):
+                raise TwitterServerError("still unavailable")
+
         class FakeMedia:
             media_id = 123
             media_id_string = "123"
@@ -281,9 +294,6 @@ class PostActionTests(unittest.TestCase):
         class FakeApiV1WithMedia:
             def media_upload(self, path, media_category=None):
                 return FakeMedia()
-
-            def update_status(self, status=None, media_ids=None):
-                raise TwitterServerError("still unavailable")
 
         import sys
         import types
@@ -299,7 +309,7 @@ class PostActionTests(unittest.TestCase):
         try:
             with patch("tweet_bot.sleep"):
                 with self.assertRaises(TwitterServerError):
-                    post_action("bernie", object(), FakeApiV1WithMedia())
+                    post_action("bernie", FakeClient(), FakeApiV1WithMedia())
         finally:
             if original_tweepy is not None:
                 sys.modules["tweepy"] = original_tweepy
@@ -325,8 +335,8 @@ class PostActionTests(unittest.TestCase):
         class TwitterServerError(Exception):
             pass
 
-        class FakeApiV1:
-            def update_status(self, status=None, media_ids=None):
+        class FakeClient:
+            def create_tweet(self, text=None, media_ids=None, user_auth=None):
                 raise Forbidden("403 Forbidden")
 
         import sys
@@ -341,7 +351,7 @@ class PostActionTests(unittest.TestCase):
         sys.modules["tweepy"] = tweepy_module
         sys.modules["tweepy.errors"] = tweepy_errors
         try:
-            post_action("larry", object(), FakeApiV1())
+            post_action("larry", FakeClient(), object())
         finally:
             if original_tweepy is not None:
                 sys.modules["tweepy"] = original_tweepy
@@ -360,23 +370,26 @@ class PostActionTests(unittest.TestCase):
         class TwitterServerError(Exception):
             pass
 
+        class FakeClient:
+            def __init__(self):
+                self.text = None
+                self.media_ids = None
+                self.user_auth = None
+
+            def create_tweet(self, text=None, media_ids=None, user_auth=None):
+                self.text = text
+                self.media_ids = media_ids
+                self.user_auth = user_auth
+                return {"ok": True}
+
         class FakeMedia:
             media_id = 123
 
         class FakeApiV1WithMedia:
-            def __init__(self):
-                self.text = None
-                self.media_ids = None
-
             def media_upload(self, path, media_category=None):
                 self.path = path
                 self.media_category = media_category
                 return FakeMedia()
-
-            def update_status(self, status=None, media_ids=None):
-                self.text = status
-                self.media_ids = media_ids
-                return {"ok": True}
 
         import sys
         import types
@@ -390,10 +403,11 @@ class PostActionTests(unittest.TestCase):
         sys.modules["tweepy"] = tweepy_module
         sys.modules["tweepy.errors"] = tweepy_errors
         try:
+            fake_client = FakeClient()
             fake_api_v1 = FakeApiV1WithMedia()
             post_action(
                 "bernie",
-                object(),
+                fake_client,
                 fake_api_v1,
                 target_date=datetime.fromisoformat("2026-04-21T08:00:00-04:00").date(),
             )
@@ -408,8 +422,9 @@ class PostActionTests(unittest.TestCase):
             else:
                 sys.modules.pop("tweepy.errors", None)
 
-        self.assertEqual(fake_api_v1.text, "No day baseball on April 21, 2026.")
-        self.assertEqual(fake_api_v1.media_ids, ["123"])
+        self.assertEqual(fake_client.text, "No day baseball on April 21, 2026.")
+        self.assertEqual(fake_client.media_ids, ["123"])
+        self.assertTrue(fake_client.user_auth)
         self.assertEqual(fake_api_v1.media_category, "tweet_image")
 
 

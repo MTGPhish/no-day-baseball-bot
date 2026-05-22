@@ -47,4 +47,4 @@ TARGET_DATE=2026-03-31 DRY_RUN=1 python tweet_bot.py
 python tweet_bot.py
 ```
 
-The scheduled bot posts through the OAuth 1.0a/v1.1 status endpoint because the configured X app is not attached to a Project and X rejects its v2 create-tweet calls. Leave old `OAUTH2_*` secrets unused unless you deliberately migrate the X app into a Project and update the posting path.
+The scheduled bot posts through X API v2 after uploading the image. X requires the `API_KEY`/`API_SECRET` app to be attached to a Project for v2 post creation; standalone app credentials fail with `403 Client Forbidden`. The legacy v1.1 status endpoint is not a reliable fallback for this app and has returned `404 Not Found` in scheduled runs.

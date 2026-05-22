@@ -246,25 +246,20 @@ def create_tweet_with_retry(
             sleep(sleep_seconds * attempt)
 
 
-def create_status_with_retry(api_v1, *, text=None, media_ids=None, attempts=5, sleep_seconds=5):
-    from tweepy.errors import TwitterServerError
-
-    for attempt in range(1, attempts + 1):
-        try:
-            return api_v1.update_status(status=text, media_ids=media_ids)
-        except TwitterServerError as error:
-            if attempt == attempts:
-                raise
-            print(f"Temporary Twitter error on attempt {attempt}/{attempts}: {error}")
-            sleep(sleep_seconds * attempt)
-
-
 def format_twitter_error(error):
     details = [str(error)]
 
     api_errors = getattr(error, "api_errors", None)
     if api_errors:
         details.append(f"api_errors={api_errors}")
+
+    api_codes = getattr(error, "api_codes", None)
+    if api_codes:
+        details.append(f"api_codes={api_codes}")
+
+    api_messages = getattr(error, "api_messages", None)
+    if api_messages:
+        details.append(f"api_messages={api_messages}")
 
     response = getattr(error, "response", None)
     if response is not None:
@@ -297,7 +292,7 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
         gif_url = "https://tenor.com/view/larry-david-unsure-uncertain-cant-decide-undecided-gif-3529136"
         tweet_text = f"{caption} {gif_url}"
         try:
-            create_status_with_retry(api_v1, text=tweet_text)
+            create_tweet_with_retry(client, text=tweet_text, user_auth=client_user_auth)
             print("Posted Larry David GIF with caption")
         except Forbidden as error:
             if is_duplicate_tweet_error(error):
@@ -318,10 +313,11 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
         tweet_text = f"No day baseball on {formatted_target_date}."
         try:
             media = api_v1.media_upload("DayBaseball.jpg", media_category="tweet_image")
-            create_status_with_retry(
-                api_v1,
+            create_tweet_with_retry(
+                client,
                 text=tweet_text,
                 media_ids=[getattr(media, "media_id_string", str(media.media_id))],
+                user_auth=client_user_auth,
             )
             print("Posted Bernie meme as media")
         except Forbidden as error:
@@ -384,7 +380,10 @@ def main():
             client_user_auth=client_user_auth,
         )
     except get_runtime_error_types() as error:
-        print(f"Failed (external dependency, posting, or configuration issue: {error})")
+        print(
+            "Failed (external dependency, posting, or configuration issue: "
+            f"{format_twitter_error(error)})"
+        )
         raise SystemExit(1) from error
 
 
