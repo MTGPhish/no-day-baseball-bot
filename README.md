@@ -41,10 +41,13 @@ TARGET_DATE=2026-03-31 DRY_RUN=1 python tweet_bot.py
    - `API_SECRET`
    - `ACCESS_TOKEN`
    - `ACCESS_TOKEN_SECRET`
+   - `OAUTH2_CLIENT_ID`
+   - `OAUTH2_CLIENT_SECRET`
+   - `OAUTH2_REFRESH_TOKEN`
 3. Run the bot with:
 
 ```bash
 python tweet_bot.py
 ```
 
-The scheduled bot posts through X API v2 after uploading the image. X requires the `API_KEY`/`API_SECRET` app to be attached to a Project for v2 post creation; standalone app credentials fail with `403 Client Forbidden`. The legacy v1.1 status endpoint is not a reliable fallback for this app and has returned `404 Not Found` in scheduled runs.
+The scheduled bot uses OAuth2 for X API v2 post creation after uploading the image with OAuth1 credentials. X requires the posting app to be attached to a Project; standalone OAuth1 app credentials fail with `403 Client Forbidden`, and the legacy v1.1 status endpoint has returned `404 Not Found` in scheduled runs. When X rotates `OAUTH2_REFRESH_TOKEN`, update that GitHub secret before the next scheduled posting day.
