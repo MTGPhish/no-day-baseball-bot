@@ -321,6 +321,21 @@ class OAuth2RefreshTests(unittest.TestCase):
         self.assertIn("status_code=403", formatted)
         self.assertIn("duplicate content", formatted)
 
+    def test_format_twitter_error_includes_client_enrollment_hint(self):
+        class FakeResponse:
+            status_code = 403
+            text = (
+                '{"reason":"client-not-enrolled",'
+                '"required_enrollment":"Appropriate Level of API Access"}'
+            )
+
+        class FakeError(Exception):
+            response = FakeResponse()
+
+        formatted = format_twitter_error(FakeError())
+        self.assertIn("Enroll this X developer Project/App", formatted)
+        self.assertIn("POST /2/tweets", formatted)
+
     def test_format_twitter_error_includes_api_messages(self):
         class FakeError(Exception):
             api_codes = [453]

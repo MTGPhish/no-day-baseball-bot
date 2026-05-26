@@ -346,8 +346,32 @@ def format_twitter_error(error):
         response_text = getattr(response, "text", None)
         if response_text:
             details.append(f"response_text={response_text}")
+            access_hint = get_x_api_access_hint(response_text)
+            if access_hint:
+                details.append(access_hint)
 
     return " | ".join(details)
+
+
+def get_x_api_access_hint(response_text):
+    import json
+
+    try:
+        response_payload = json.loads(response_text)
+    except (TypeError, ValueError):
+        return None
+
+    if response_payload.get("reason") == "client-not-enrolled":
+        return (
+            "hint=Enroll this X developer Project/App in an X API product/access "
+            "tier that allows POST /2/tweets."
+        )
+
+    required_enrollment = response_payload.get("required_enrollment")
+    if required_enrollment:
+        return f"hint=X API required enrollment: {required_enrollment}"
+
+    return None
 
 
 def is_duplicate_tweet_error(error):
