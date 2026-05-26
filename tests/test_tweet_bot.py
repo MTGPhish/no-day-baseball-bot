@@ -10,8 +10,10 @@ from tweet_bot import (
     fetch_today_games,
     format_twitter_error,
     format_target_date,
+    get_oauth2_refresh_token,
     get_target_date,
     is_duplicate_tweet_error,
+    persist_oauth2_refresh_token,
     post_action,
     refresh_oauth2_access_token,
 )
@@ -200,6 +202,14 @@ class RetryTests(unittest.TestCase):
 
 
 class OAuth2RefreshTests(unittest.TestCase):
+    def tearDown(self):
+        for name in (
+            "OAUTH2_REFRESH_TOKEN",
+            "OAUTH2_REFRESH_TOKEN_KEY",
+            "OAUTH2_REFRESH_TOKEN_FILE",
+        ):
+            os.environ.pop(name, None)
+
     def test_refresh_oauth2_access_token_uses_basic_auth_header(self):
         import base64
         from unittest.mock import patch
@@ -225,6 +235,74 @@ class OAuth2RefreshTests(unittest.TestCase):
             kwargs["headers"]["Content-Type"],
             "application/x-www-form-urlencoded",
         )
+
+    def test_refresh_oauth2_access_token_persists_rotated_token(self):
+        from unittest.mock import patch
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "access_token": "new-access-token",
+                    "refresh_token": "rotated-refresh-token",
+                }
+
+        with patch("requests.post", return_value=FakeResponse()):
+            with patch("tweet_bot.persist_oauth2_refresh_token") as persist_mock:
+                access_token = refresh_oauth2_access_token(
+                    "client-id",
+                    "client-secret",
+                    "old-refresh-token",
+                )
+
+        self.assertEqual(access_token, "new-access-token")
+        persist_mock.assert_called_once_with("rotated-refresh-token")
+
+    def test_get_oauth2_refresh_token_prefers_encrypted_file(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            encrypted_file = Path(temp_dir) / "refresh.enc"
+            encrypted_file.write_bytes(b"encrypted-token")
+            os.environ["OAUTH2_REFRESH_TOKEN"] = "stale-secret-token"
+            os.environ["OAUTH2_REFRESH_TOKEN_KEY"] = "encryption-key"
+            os.environ["OAUTH2_REFRESH_TOKEN_FILE"] = str(encrypted_file)
+
+            with patch(
+                "tweet_bot.decrypt_oauth2_refresh_token",
+                return_value="stored-refresh-token",
+            ) as decrypt_mock:
+                refresh_token = get_oauth2_refresh_token()
+
+        self.assertEqual(refresh_token, "stored-refresh-token")
+        decrypt_mock.assert_called_once_with(b"encrypted-token", "encryption-key")
+
+    def test_persist_oauth2_refresh_token_writes_encrypted_file(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            encrypted_file = Path(temp_dir) / "refresh.enc"
+            os.environ["OAUTH2_REFRESH_TOKEN_KEY"] = "encryption-key"
+            os.environ["OAUTH2_REFRESH_TOKEN_FILE"] = str(encrypted_file)
+
+            with patch(
+                "tweet_bot.encrypt_oauth2_refresh_token",
+                return_value=b"encrypted-token",
+            ) as encrypt_mock:
+                persisted = persist_oauth2_refresh_token("rotated-refresh-token")
+
+            self.assertTrue(persisted)
+            self.assertEqual(encrypted_file.read_bytes(), b"encrypted-token")
+            encrypt_mock.assert_called_once_with(
+                "rotated-refresh-token",
+                "encryption-key",
+            )
 
     def test_format_twitter_error_includes_response_text(self):
         class FakeResponse:
@@ -274,6 +352,9 @@ class OAuth2RefreshTests(unittest.TestCase):
 
 
 class PostActionTests(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop("POST_TEXT_SUFFIX", None)
+
     def test_post_action_raises_final_twitter_server_error(self):
         from unittest.mock import patch
 
@@ -427,6 +508,64 @@ class PostActionTests(unittest.TestCase):
         self.assertTrue(fake_client.user_auth)
         self.assertEqual(fake_api_v1.media_category, "tweet_image")
 
+    def test_post_action_appends_optional_suffix_to_bernie_tweet_text(self):
+        class Forbidden(Exception):
+            pass
+
+        class TwitterServerError(Exception):
+            pass
+
+        class FakeClient:
+            def __init__(self):
+                self.text = None
+
+            def create_tweet(self, text=None, media_ids=None, user_auth=None):
+                self.text = text
+                return {"ok": True}
+
+        class FakeMedia:
+            media_id = 123
+
+        class FakeApiV1WithMedia:
+            def media_upload(self, path, media_category=None):
+                return FakeMedia()
+
+        import sys
+        import types
+
+        os.environ["POST_TEXT_SUFFIX"] = " (live test)"
+        original_tweepy = sys.modules.get("tweepy")
+        original_tweepy_errors = sys.modules.get("tweepy.errors")
+        tweepy_module = types.ModuleType("tweepy")
+        tweepy_errors = types.ModuleType("tweepy.errors")
+        tweepy_errors.Forbidden = Forbidden
+        tweepy_errors.TwitterServerError = TwitterServerError
+        sys.modules["tweepy"] = tweepy_module
+        sys.modules["tweepy.errors"] = tweepy_errors
+        try:
+            fake_client = FakeClient()
+            post_action(
+                "bernie",
+                fake_client,
+                FakeApiV1WithMedia(),
+                target_date=datetime.fromisoformat("2026-04-21T08:00:00-04:00").date(),
+            )
+        finally:
+            if original_tweepy is not None:
+                sys.modules["tweepy"] = original_tweepy
+            else:
+                sys.modules.pop("tweepy", None)
+
+            if original_tweepy_errors is not None:
+                sys.modules["tweepy.errors"] = original_tweepy_errors
+            else:
+                sys.modules.pop("tweepy.errors", None)
+
+        self.assertEqual(
+            fake_client.text,
+            "No day baseball on April 21, 2026. (live test)",
+        )
+
 
 class FormattingTests(unittest.TestCase):
     def test_format_target_date_uses_readable_month_day_year(self):
@@ -444,6 +583,9 @@ class ConfigurationTests(unittest.TestCase):
             "OAUTH2_CLIENT_ID",
             "OAUTH2_CLIENT_SECRET",
             "OAUTH2_REFRESH_TOKEN",
+            "OAUTH2_REFRESH_TOKEN_KEY",
+            "OAUTH2_REFRESH_TOKEN_FILE",
+            "POST_TEXT_SUFFIX",
             "X_AUTH_MODE",
         ):
             os.environ.pop(name, None)

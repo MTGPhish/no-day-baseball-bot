@@ -1,84 +1,69 @@
-name: Refresh OAuth2 Token Secret
+name: Refresh OAuth2 Token
 
 on:
   workflow_dispatch:
 
 permissions:
-  actions: read
-  contents: read
+  contents: write
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
-      - name: Refresh and encrypt rotated token
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OAUTH2_CLIENT_ID: ${{ secrets.OAUTH2_CLIENT_ID }}
-          OAUTH2_CLIENT_SECRET: ${{ secrets.OAUTH2_CLIENT_SECRET }}
-          OAUTH2_REFRESH_TOKEN: ${{ secrets.OAUTH2_REFRESH_TOKEN }}
-        run: |
-          python -m pip install pynacl requests
-          python - <<'PY'
-          import base64
-          import os
-          import sys
+      - uses: actions/checkout@v6
 
-          import requests
-          from nacl import encoding, public
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - run: pip install requests cryptography
+
+      - name: Refresh OAuth2 token
+        run: |
+          python - <<'PY'
+          import os
+
+          from tweet_bot import get_oauth2_refresh_token, refresh_oauth2_access_token
 
           missing = [
               name
               for name in (
-                  "GH_TOKEN",
-                  "GITHUB_REPOSITORY",
                   "OAUTH2_CLIENT_ID",
                   "OAUTH2_CLIENT_SECRET",
-                  "OAUTH2_REFRESH_TOKEN",
+                  "OAUTH2_REFRESH_TOKEN_KEY",
               )
               if not os.getenv(name)
           ]
           if missing:
               raise SystemExit("Missing required environment variables: " + ", ".join(missing))
 
-          token_response = requests.post(
-              "https://api.x.com/2/oauth2/token",
-              auth=(os.environ["OAUTH2_CLIENT_ID"], os.environ["OAUTH2_CLIENT_SECRET"]),
-              data={
-                  "grant_type": "refresh_token",
-                  "refresh_token": os.environ["OAUTH2_REFRESH_TOKEN"],
-              },
-              timeout=30,
+          refresh_token = get_oauth2_refresh_token()
+          if not refresh_token:
+              raise SystemExit(
+                  "Missing OAUTH2_REFRESH_TOKEN and no encrypted refresh token file exists"
+              )
+
+          refresh_oauth2_access_token(
+              os.environ["OAUTH2_CLIENT_ID"],
+              os.environ["OAUTH2_CLIENT_SECRET"],
+              refresh_token,
           )
-          if not token_response.ok:
-              print(f"REFRESH_FAILED_STATUS={token_response.status_code}")
-              print(f"REFRESH_FAILED_BODY={token_response.text}")
-              token_response.raise_for_status()
-
-          token_payload = token_response.json()
-          rotated_refresh_token = token_payload.get("refresh_token")
-          if not rotated_refresh_token:
-              print("NO_ROTATED_REFRESH_TOKEN_RETURNED=1")
-              sys.exit(0)
-
-          headers = {
-              "Accept": "application/vnd.github+json",
-              "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-              "X-GitHub-Api-Version": "2022-11-28",
-          }
-          key_response = requests.get(
-              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/secrets/public-key",
-              headers=headers,
-              timeout=30,
-          )
-          key_response.raise_for_status()
-          key_payload = key_response.json()
-
-          public_key = public.PublicKey(key_payload["key"].encode("utf-8"), encoding.Base64Encoder())
-          encrypted = public.SealedBox(public_key).encrypt(rotated_refresh_token.encode("utf-8"))
-          encrypted_value = base64.b64encode(encrypted).decode("utf-8")
-
-          print(f"KEY_ID={key_payload['key_id']}")
-          print(f"ENCRYPTED_OAUTH2_REFRESH_TOKEN={encrypted_value}")
-          print("REFRESH_SUCCEEDED=1")
           PY
+        env:
+          OAUTH2_CLIENT_ID: ${{ secrets.OAUTH2_CLIENT_ID }}
+          OAUTH2_CLIENT_SECRET: ${{ secrets.OAUTH2_CLIENT_SECRET }}
+          OAUTH2_REFRESH_TOKEN: ${{ secrets.OAUTH2_REFRESH_TOKEN }}
+          OAUTH2_REFRESH_TOKEN_KEY: ${{ secrets.OAUTH2_REFRESH_TOKEN_KEY }}
+
+      - name: Commit rotated OAuth2 refresh token
+        run: |
+          if [ -z "$(git status --porcelain -- .oauth2_refresh_token.enc)" ]; then
+            echo "No rotated OAuth2 refresh token changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .oauth2_refresh_token.enc
+          git commit -m "Update OAuth2 refresh token"
+          git push

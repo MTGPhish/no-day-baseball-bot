@@ -1,9 +1,13 @@
 import os
 from datetime import datetime, time
+from pathlib import Path
 from time import sleep
 from zoneinfo import ZoneInfo
 
 EASTERN = ZoneInfo("America/New_York")
+DEFAULT_OAUTH2_REFRESH_TOKEN_FILE = ".oauth2_refresh_token.enc"
+OAUTH2_REFRESH_TOKEN_KEY_ENV_VAR = "OAUTH2_REFRESH_TOKEN_KEY"
+OAUTH2_REFRESH_TOKEN_FILE_ENV_VAR = "OAUTH2_REFRESH_TOKEN_FILE"
 REQUIRED_TWITTER_ENV_VARS = (
     "API_KEY",
     "API_SECRET",
@@ -14,6 +18,10 @@ OPTIONAL_OAUTH2_ENV_VARS = (
     "OAUTH2_CLIENT_ID",
     "OAUTH2_CLIENT_SECRET",
     "OAUTH2_REFRESH_TOKEN",
+)
+OPTIONAL_TOKEN_PERSISTENCE_ENV_VARS = (
+    OAUTH2_REFRESH_TOKEN_KEY_ENV_VAR,
+    OAUTH2_REFRESH_TOKEN_FILE_ENV_VAR,
 )
 OAUTH2_AUTH_MODE = "oauth2"
 DEFAULT_AUTH_MODE = "oauth1"
@@ -51,6 +59,10 @@ def parse_game_time(game, timezone=EASTERN):
 
 def format_target_date(target_date):
     return f"{target_date.strftime('%B')} {target_date.day}, {target_date.year}"
+
+
+def get_post_text_suffix():
+    return os.getenv("POST_TEXT_SUFFIX", "")
 
 
 def fetch_today_games(schedule_date=None, session=None):
@@ -112,12 +124,12 @@ def create_twitter_clients():
     access_token_secret = credentials["ACCESS_TOKEN_SECRET"]
     oauth2_client_id = os.getenv("OAUTH2_CLIENT_ID")
     oauth2_client_secret = os.getenv("OAUTH2_CLIENT_SECRET")
-    oauth2_refresh_token = os.getenv("OAUTH2_REFRESH_TOKEN")
     auth_mode = os.getenv("X_AUTH_MODE", DEFAULT_AUTH_MODE).lower()
 
     import tweepy
 
     if auth_mode == OAUTH2_AUTH_MODE:
+        oauth2_refresh_token = get_oauth2_refresh_token()
         missing_oauth2 = [
             name
             for name, value in (
@@ -161,6 +173,73 @@ def create_twitter_clients():
     return client, client_user_auth, api_v1
 
 
+def get_oauth2_refresh_token():
+    encrypted_token_path = get_oauth2_refresh_token_path()
+    encryption_key = os.getenv(OAUTH2_REFRESH_TOKEN_KEY_ENV_VAR)
+
+    if encryption_key and encrypted_token_path.exists():
+        return decrypt_oauth2_refresh_token(
+            encrypted_token_path.read_bytes(),
+            encryption_key,
+        )
+
+    return os.getenv("OAUTH2_REFRESH_TOKEN")
+
+
+def get_oauth2_refresh_token_path():
+    return Path(
+        os.getenv(OAUTH2_REFRESH_TOKEN_FILE_ENV_VAR, DEFAULT_OAUTH2_REFRESH_TOKEN_FILE)
+    )
+
+
+def decrypt_oauth2_refresh_token(encrypted_token, encryption_key):
+    try:
+        from cryptography.fernet import Fernet, InvalidToken
+    except ImportError as error:
+        raise BotConfigurationError(
+            "cryptography is required when OAUTH2_REFRESH_TOKEN_KEY is set"
+        ) from error
+
+    try:
+        return Fernet(encryption_key.encode("utf-8")).decrypt(encrypted_token).decode(
+            "utf-8"
+        )
+    except InvalidToken as error:
+        raise BotConfigurationError(
+            "Encrypted OAuth2 refresh token could not be decrypted"
+        ) from error
+
+
+def encrypt_oauth2_refresh_token(refresh_token, encryption_key):
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError as error:
+        raise BotConfigurationError(
+            "cryptography is required when OAUTH2_REFRESH_TOKEN_KEY is set"
+        ) from error
+
+    return Fernet(encryption_key.encode("utf-8")).encrypt(
+        refresh_token.encode("utf-8")
+    )
+
+
+def persist_oauth2_refresh_token(refresh_token):
+    encryption_key = os.getenv(OAUTH2_REFRESH_TOKEN_KEY_ENV_VAR)
+    if not encryption_key:
+        print(
+            "NOTICE: OAUTH2_REFRESH_TOKEN rotated. "
+            "Set OAUTH2_REFRESH_TOKEN_KEY to persist rotated tokens automatically."
+        )
+        return False
+
+    encrypted_token_path = get_oauth2_refresh_token_path()
+    encrypted_token_path.write_bytes(
+        encrypt_oauth2_refresh_token(refresh_token, encryption_key)
+    )
+    print(f"NOTICE: Saved rotated OAuth2 refresh token to {encrypted_token_path}.")
+    return True
+
+
 def refresh_oauth2_access_token(client_id, client_secret, refresh_token):
     import base64
     import requests
@@ -186,10 +265,7 @@ def refresh_oauth2_access_token(client_id, client_secret, refresh_token):
 
     rotated_refresh_token = refreshed_token.get("refresh_token")
     if rotated_refresh_token and rotated_refresh_token != refresh_token:
-        print(
-            "NOTICE: OAUTH2_REFRESH_TOKEN rotated. "
-            "Update the GitHub secret to keep future runs healthy."
-        )
+        persist_oauth2_refresh_token(rotated_refresh_token)
 
     return refreshed_token["access_token"]
 
@@ -286,9 +362,10 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
     from tweepy.errors import Forbidden, TwitterServerError
 
     formatted_target_date = format_target_date(target_date or get_target_date())
+    post_text_suffix = get_post_text_suffix()
 
     if action == "larry":
-        caption = f"Day baseball? I'm conflicted on {formatted_target_date}."
+        caption = f"Day baseball? I'm conflicted on {formatted_target_date}.{post_text_suffix}"
         gif_url = "https://tenor.com/view/larry-david-unsure-uncertain-cant-decide-undecided-gif-3529136"
         tweet_text = f"{caption} {gif_url}"
         try:
@@ -310,7 +387,7 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
         return
 
     if action == "bernie":
-        tweet_text = f"No day baseball on {formatted_target_date}."
+        tweet_text = f"No day baseball on {formatted_target_date}.{post_text_suffix}"
         try:
             media = api_v1.media_upload("DayBaseball.jpg", media_category="tweet_image")
             create_tweet_with_retry(
