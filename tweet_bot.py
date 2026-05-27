@@ -61,10 +61,6 @@ def format_target_date(target_date):
     return f"{target_date.strftime('%B')} {target_date.day}, {target_date.year}"
 
 
-def get_post_text_suffix():
-    return os.getenv("POST_TEXT_SUFFIX", "")
-
-
 def fetch_today_games(schedule_date=None, session=None):
     import requests
 
@@ -285,7 +281,9 @@ def create_tweet_with_retry(
     for attempt in range(1, attempts + 1):
         try:
             if isinstance(client, str):
-                payload = {"text": text}
+                payload = {}
+                if text is not None:
+                    payload["text"] = text
                 if media_ids:
                     payload["media"] = {"media_ids": [str(media_id) for media_id in media_ids]}
 
@@ -386,10 +384,9 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
     from tweepy.errors import Forbidden, TwitterServerError
 
     formatted_target_date = format_target_date(target_date or get_target_date())
-    post_text_suffix = get_post_text_suffix()
 
     if action == "larry":
-        caption = f"Day baseball? I'm conflicted on {formatted_target_date}.{post_text_suffix}"
+        caption = f"Day baseball? I'm conflicted on {formatted_target_date}."
         gif_url = "https://tenor.com/view/larry-david-unsure-uncertain-cant-decide-undecided-gif-3529136"
         tweet_text = f"{caption} {gif_url}"
         try:
@@ -411,12 +408,10 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
         return
 
     if action == "bernie":
-        tweet_text = f"No day baseball on {formatted_target_date}.{post_text_suffix}"
         try:
             media = api_v1.media_upload("DayBaseball.jpg", media_category="tweet_image")
             create_tweet_with_retry(
                 client,
-                text=tweet_text,
                 media_ids=[getattr(media, "media_id_string", str(media.media_id))],
                 user_auth=client_user_auth,
             )

@@ -4,11 +4,6 @@ on:
   schedule:
     - cron: "5 13 * * *"   # 13:05 UTC, which is 8:05 AM during U.S. Central Daylight Time
   workflow_dispatch:
-    inputs:
-      post_text_suffix:
-        description: "Optional suffix appended to post text for manual live tests"
-        required: false
-        default: ""
 
 permissions:
   contents: write
@@ -40,7 +35,6 @@ jobs:
           OAUTH2_CLIENT_SECRET: ${{ secrets.OAUTH2_CLIENT_SECRET }}
           OAUTH2_REFRESH_TOKEN: ${{ secrets.OAUTH2_REFRESH_TOKEN }}
           OAUTH2_REFRESH_TOKEN_KEY: ${{ secrets.OAUTH2_REFRESH_TOKEN_KEY }}
-          POST_TEXT_SUFFIX: ${{ github.event.inputs.post_text_suffix }}
 
       - name: Commit rotated OAuth2 refresh token
         if: always()

@@ -200,6 +200,41 @@ class RetryTests(unittest.TestCase):
 
         self.assertEqual([call.args[0] for call in sleep_mock.call_args_list], [2, 4])
 
+    def test_oauth2_media_only_tweet_omits_text_field(self):
+        import sys
+        import types
+        from unittest.mock import patch
+
+        class TwitterServerError(Exception):
+            pass
+
+        class FakeResponse:
+            status_code = 201
+            reason = "Created"
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"ok": True}
+
+        original_tweepy_errors = sys.modules.get("tweepy.errors")
+        tweepy_errors = types.ModuleType("tweepy.errors")
+        tweepy_errors.TwitterServerError = TwitterServerError
+        sys.modules["tweepy.errors"] = tweepy_errors
+        try:
+            with patch("requests.post", return_value=FakeResponse()) as post_mock:
+                result = create_tweet_with_retry("oauth2-access-token", media_ids=["123"])
+        finally:
+            if original_tweepy_errors is not None:
+                sys.modules["tweepy.errors"] = original_tweepy_errors
+            else:
+                sys.modules.pop("tweepy.errors", None)
+
+        self.assertEqual(result, {"ok": True})
+        _, kwargs = post_mock.call_args
+        self.assertEqual(kwargs["json"], {"media": {"media_ids": ["123"]}})
+
 
 class OAuth2RefreshTests(unittest.TestCase):
     def tearDown(self):
@@ -367,9 +402,6 @@ class OAuth2RefreshTests(unittest.TestCase):
 
 
 class PostActionTests(unittest.TestCase):
-    def tearDown(self):
-        os.environ.pop("POST_TEXT_SUFFIX", None)
-
     def test_post_action_raises_final_twitter_server_error(self):
         from unittest.mock import patch
 
@@ -459,7 +491,7 @@ class PostActionTests(unittest.TestCase):
             else:
                 sys.modules.pop("tweepy.errors", None)
 
-    def test_post_action_includes_date_in_bernie_tweet_text(self):
+    def test_post_action_posts_bernie_media_without_text(self):
         class Forbidden(Exception):
             pass
 
@@ -518,68 +550,10 @@ class PostActionTests(unittest.TestCase):
             else:
                 sys.modules.pop("tweepy.errors", None)
 
-        self.assertEqual(fake_client.text, "No day baseball on April 21, 2026.")
+        self.assertIsNone(fake_client.text)
         self.assertEqual(fake_client.media_ids, ["123"])
         self.assertTrue(fake_client.user_auth)
         self.assertEqual(fake_api_v1.media_category, "tweet_image")
-
-    def test_post_action_appends_optional_suffix_to_bernie_tweet_text(self):
-        class Forbidden(Exception):
-            pass
-
-        class TwitterServerError(Exception):
-            pass
-
-        class FakeClient:
-            def __init__(self):
-                self.text = None
-
-            def create_tweet(self, text=None, media_ids=None, user_auth=None):
-                self.text = text
-                return {"ok": True}
-
-        class FakeMedia:
-            media_id = 123
-
-        class FakeApiV1WithMedia:
-            def media_upload(self, path, media_category=None):
-                return FakeMedia()
-
-        import sys
-        import types
-
-        os.environ["POST_TEXT_SUFFIX"] = " (live test)"
-        original_tweepy = sys.modules.get("tweepy")
-        original_tweepy_errors = sys.modules.get("tweepy.errors")
-        tweepy_module = types.ModuleType("tweepy")
-        tweepy_errors = types.ModuleType("tweepy.errors")
-        tweepy_errors.Forbidden = Forbidden
-        tweepy_errors.TwitterServerError = TwitterServerError
-        sys.modules["tweepy"] = tweepy_module
-        sys.modules["tweepy.errors"] = tweepy_errors
-        try:
-            fake_client = FakeClient()
-            post_action(
-                "bernie",
-                fake_client,
-                FakeApiV1WithMedia(),
-                target_date=datetime.fromisoformat("2026-04-21T08:00:00-04:00").date(),
-            )
-        finally:
-            if original_tweepy is not None:
-                sys.modules["tweepy"] = original_tweepy
-            else:
-                sys.modules.pop("tweepy", None)
-
-            if original_tweepy_errors is not None:
-                sys.modules["tweepy.errors"] = original_tweepy_errors
-            else:
-                sys.modules.pop("tweepy.errors", None)
-
-        self.assertEqual(
-            fake_client.text,
-            "No day baseball on April 21, 2026. (live test)",
-        )
 
 
 class FormattingTests(unittest.TestCase):
@@ -600,7 +574,6 @@ class ConfigurationTests(unittest.TestCase):
             "OAUTH2_REFRESH_TOKEN",
             "OAUTH2_REFRESH_TOKEN_KEY",
             "OAUTH2_REFRESH_TOKEN_FILE",
-            "POST_TEXT_SUFFIX",
             "X_AUTH_MODE",
         ):
             os.environ.pop(name, None)
