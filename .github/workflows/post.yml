@@ -2,7 +2,7 @@ name: Post Meme If No Day Baseball
 
 on:
   schedule:
-    - cron: "5 13 * * *"   # 13:05 UTC, which is 8:05 AM during U.S. Central Daylight Time
+    - cron: "17 15 * * *"  # 15:17 UTC, targeting 10:17 AM Central / 11:17 AM Eastern during daylight time
   workflow_dispatch:
 
 permissions:
