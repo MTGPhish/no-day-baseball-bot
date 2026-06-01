@@ -12,9 +12,11 @@ from tweet_bot import (
     format_target_date,
     get_oauth2_refresh_token,
     get_target_date,
+    has_recorded_post_action,
     is_duplicate_tweet_error,
     persist_oauth2_refresh_token,
     post_action,
+    record_post_action,
     refresh_oauth2_access_token,
 )
 
@@ -106,6 +108,26 @@ class FetchTodayGamesTests(unittest.TestCase):
         self.assertEqual(len(games), 1)
         self.assertIn("date=2026-03-30", session.last_url)
         self.assertEqual(session.last_timeout, 10)
+
+
+class PostStateTests(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop("POST_STATE_FILE", None)
+
+    def test_records_and_checks_post_action_by_date(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "posted_actions.json"
+            os.environ["POST_STATE_FILE"] = str(state_path)
+            target_date = datetime.fromisoformat("2026-06-01T12:00:00-04:00").date()
+
+            self.assertFalse(has_recorded_post_action(target_date, "bernie"))
+            record_post_action(target_date, "bernie")
+
+            self.assertTrue(has_recorded_post_action(target_date, "bernie"))
+            self.assertFalse(has_recorded_post_action(target_date, "larry"))
 
 
 class RetryTests(unittest.TestCase):
@@ -574,6 +596,7 @@ class ConfigurationTests(unittest.TestCase):
             "OAUTH2_REFRESH_TOKEN",
             "OAUTH2_REFRESH_TOKEN_KEY",
             "OAUTH2_REFRESH_TOKEN_FILE",
+            "POST_STATE_FILE",
             "X_AUTH_MODE",
         ):
             os.environ.pop(name, None)

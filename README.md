@@ -2,7 +2,7 @@
 
 No Day Baseball is an automated Twitter/X bot that complains when MLB schedules a full day of games without any true day baseball.
 
-Hosted with GitHub Actions, it runs daily at `15:17 UTC` and:
+Hosted with GitHub Actions, it runs daily at `15:17 UTC`, with a fallback run at `17:47 UTC`, and:
 
 1. Queries MLB's public schedule API for today's games.
 2. Checks whether any game starts before `4:00 PM` Eastern.
@@ -15,8 +15,9 @@ Posting failures are treated as workflow failures. Duplicate-content reruns are 
 ## Behavior Notes
 
 - `4:00 PM Eastern` is treated as not early. The bot only counts starts before `4:00 PM`.
-- The scheduled workflow time is fixed in UTC. During Eastern Daylight Time that is `11:17 AM`, and during Eastern Standard Time that is `10:17 AM`.
-- GitHub scheduled workflows can start later than their cron time. The `15:17 UTC` trigger is meant to be late enough for the meme to feel timely, while leaving buffer before the `4:00 PM Eastern` no-day-game cutoff.
+- The scheduled workflow times are fixed in UTC. During Eastern Daylight Time, the primary run targets `11:17 AM` and the fallback targets `1:47 PM`.
+- GitHub scheduled workflows can start later than their cron time or occasionally miss a run. The `17:47 UTC` fallback gives the bot another chance before the `4:00 PM Eastern` no-day-game cutoff.
+- Successful posts are recorded in `.posted_actions.json`, so fallback or delayed runs skip when the same action has already posted for that date.
 
 ## Testing
 

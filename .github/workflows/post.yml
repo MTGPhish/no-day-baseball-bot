@@ -3,10 +3,15 @@ name: Post Meme If No Day Baseball
 on:
   schedule:
     - cron: "17 15 * * *"  # 15:17 UTC, targeting 10:17 AM Central / 11:17 AM Eastern during daylight time
+    - cron: "47 17 * * *"  # fallback if GitHub misses or heavily delays the first scheduled run
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: post-meme-if-no-day-baseball
+  cancel-in-progress: false
 
 jobs:
   post:
@@ -39,13 +44,16 @@ jobs:
       - name: Commit rotated OAuth2 refresh token
         if: always()
         run: |
-          if [ -z "$(git status --porcelain -- .oauth2_refresh_token.enc)" ]; then
-            echo "No rotated OAuth2 refresh token changes to commit."
+          if [ -z "$(git status --porcelain -- .oauth2_refresh_token.enc .posted_actions.json)" ]; then
+            echo "No state changes to commit."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .oauth2_refresh_token.enc
-          git commit -m "Update OAuth2 refresh token"
+          if [ -f .posted_actions.json ]; then
+            git add .posted_actions.json
+          fi
+          git commit -m "Update bot run state"
           git push

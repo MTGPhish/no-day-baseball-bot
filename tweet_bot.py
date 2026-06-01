@@ -6,8 +6,10 @@ from zoneinfo import ZoneInfo
 
 EASTERN = ZoneInfo("America/New_York")
 DEFAULT_OAUTH2_REFRESH_TOKEN_FILE = ".oauth2_refresh_token.enc"
+DEFAULT_POST_STATE_FILE = ".posted_actions.json"
 OAUTH2_REFRESH_TOKEN_KEY_ENV_VAR = "OAUTH2_REFRESH_TOKEN_KEY"
 OAUTH2_REFRESH_TOKEN_FILE_ENV_VAR = "OAUTH2_REFRESH_TOKEN_FILE"
+POST_STATE_FILE_ENV_VAR = "POST_STATE_FILE"
 REQUIRED_TWITTER_ENV_VARS = (
     "API_KEY",
     "API_SECRET",
@@ -59,6 +61,43 @@ def parse_game_time(game, timezone=EASTERN):
 
 def format_target_date(target_date):
     return f"{target_date.strftime('%B')} {target_date.day}, {target_date.year}"
+
+
+def get_post_state_path():
+    return Path(os.getenv(POST_STATE_FILE_ENV_VAR, DEFAULT_POST_STATE_FILE))
+
+
+def load_post_state():
+    import json
+
+    state_path = get_post_state_path()
+    if not state_path.exists():
+        return {}
+
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise BotConfigurationError(f"Invalid post state file: {state_path}") from error
+
+    if not isinstance(state, dict):
+        raise BotConfigurationError(f"Invalid post state file: {state_path}")
+
+    return {str(date): str(action) for date, action in state.items()}
+
+
+def has_recorded_post_action(target_date, action):
+    return load_post_state().get(target_date.isoformat()) == action
+
+
+def record_post_action(target_date, action):
+    import json
+
+    state = load_post_state()
+    state[target_date.isoformat()] = action
+    get_post_state_path().write_text(
+        json.dumps(state, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def fetch_today_games(schedule_date=None, session=None):
@@ -392,20 +431,22 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
         try:
             create_tweet_with_retry(client, text=tweet_text, user_auth=client_user_auth)
             print("Posted Larry David GIF with caption")
+            return True
         except Forbidden as error:
             if is_duplicate_tweet_error(error):
                 print("Skipped (duplicate tweet):", format_twitter_error(error))
+                return True
             else:
                 raise
         except requests.HTTPError as error:
             if is_duplicate_tweet_error(error):
                 print("Skipped (duplicate tweet):", format_twitter_error(error))
+                return True
             else:
                 raise
         except TwitterServerError as error:
             print("Twitter server unavailable after retries:", error)
             raise
-        return
 
     if action == "bernie":
         try:
@@ -416,22 +457,25 @@ def post_action(action, client, api_v1, *, target_date=None, client_user_auth=Tr
                 user_auth=client_user_auth,
             )
             print("Posted Bernie meme as media")
+            return True
         except Forbidden as error:
             if is_duplicate_tweet_error(error):
                 print("Skipped (duplicate tweet):", format_twitter_error(error))
+                return True
             else:
                 raise
         except requests.HTTPError as error:
             if is_duplicate_tweet_error(error):
                 print("Skipped (duplicate tweet):", format_twitter_error(error))
+                return True
             else:
                 raise
         except TwitterServerError as error:
             print("Twitter server unavailable after retries:", error)
             raise
-        return
 
     print("Skipped (day games or no games scheduled today)")
+    return False
 
 
 def get_runtime_error_types():
@@ -467,14 +511,20 @@ def main():
             print("Skipped (day games or no games scheduled today)")
             return
 
+        if has_recorded_post_action(target_date, action):
+            print(f"Skipped (already posted {action} for {target_date.isoformat()})")
+            return
+
         client, client_user_auth, api_v1 = create_twitter_clients()
-        post_action(
+        posted = post_action(
             action,
             client,
             api_v1,
             target_date=target_date,
             client_user_auth=client_user_auth,
         )
+        if posted:
+            record_post_action(target_date, action)
     except get_runtime_error_types() as error:
         print(
             "Failed (external dependency, posting, or configuration issue: "
