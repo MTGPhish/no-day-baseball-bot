@@ -2,8 +2,7 @@ name: Post Meme If No Day Baseball
 
 on:
   schedule:
-    - cron: "17 15 * * *"  # 15:17 UTC, targeting 10:17 AM Central / 11:17 AM Eastern during daylight time
-    - cron: "47 17 * * *"  # fallback if GitHub misses or heavily delays the first scheduled run
+    - cron: "23,53 12-14 * * *"  # early staggered attempts: 7:23-9:53 AM Central during daylight time
   workflow_dispatch:
 
 permissions:
@@ -18,6 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Sync latest bot state
+        run: git pull --ff-only origin main
 
       - uses: actions/setup-python@v6
         with:
@@ -56,4 +61,5 @@ jobs:
             git add .posted_actions.json
           fi
           git commit -m "Update bot run state"
+          git pull --rebase origin main
           git push
